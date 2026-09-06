@@ -6,7 +6,7 @@ Junior teams pick an API style because it's what the framework tutorial used. Se
 
 ## Three protocols, three contracts
 
-**REST** is a resource-oriented style built on HTTP semantics. A REST API exposes nouns (`/orders/42`) and lets HTTP verbs (`GET`, `POST`, `PATCH`, `DELETE`) express intent. Its contract is loose by design — the client and server agree on media types and status codes, but the shape of the payload is whatever the server decides to send. This looseness is REST's biggest strength (any HTTP client can talk to it, caching works for free) and its biggest weakness (over-fetching, under-fetching, and undocumented payload drift).
+**REST** is a resource-oriented style built on HTTP semantics. A REST API exposes nouns (`/orders/42`) and lets HTTP verbs (`GET`, `POST`, `PATCH`, `DELETE`) express intent. Its contract is loose *at the protocol level* — HTTP itself enforces media types and status codes but not payload shape. Teams routinely impose a strong contract on top with OpenAPI, JSON Schema, and consumer-driven contract tests; the point is that this is a discipline the organization adds, not something the protocol checks for you the way a GraphQL schema or a `.proto` file does. That looseness is REST's biggest strength (any HTTP client can talk to it, caching works for free) and, left undisciplined, its biggest weakness (over-fetching, under-fetching, and undocumented payload drift).
 
 **GraphQL** is a query-oriented style built on a single endpoint and a strongly typed schema. The client specifies the exact shape of the data it wants, and the server resolves it field by field. This solves REST's over-fetching problem at the cost of moving complexity into the resolver graph — a single query can now trigger dozens of downstream calls, and the server has to defend itself against expensive queries at request time rather than at design time.
 
@@ -14,7 +14,7 @@ Junior teams pick an API style because it's what the framework tutorial used. Se
 
 | Aspect | REST | GraphQL | gRPC |
 |---|---|---|---|
-| Contract | Loose — HTTP verbs and media types; payload shape decided by the server | Strongly typed schema; client specifies the exact shape it wants | Contract-first `.proto` file; generates typed client/server stubs |
+| Contract | Loose at the protocol level — HTTP verbs and media types; strong payload contracts (OpenAPI/JSON Schema) are a convention layered on top | Strongly typed schema; client specifies the exact shape it wants | Contract-first `.proto` file; generates typed client/server stubs |
 | Biggest strength | Any HTTP client can talk to it; caching works for free | Solves over-fetching and under-fetching | Compact binary wire format, strong typing, native streaming |
 | Biggest weakness | Over-fetching, under-fetching, undocumented payload drift | Complexity moves into the resolver graph; server must defend against expensive queries | Not browser-native; trades human-readability for performance |
 
@@ -86,9 +86,19 @@ print(response.status, response.line_items)
 
 No JSON parsing, no URL construction — the client calls a typed method and gets a typed object back. The contract (`Order`, `GetOrderRequest`) is generated from the `.proto` file, so a field typo is a build error, not a runtime surprise.
 
+## First, a prior question: which communication model?
+
+REST, GraphQL, and gRPC are all **synchronous request/response**: a client sends a request, waits, and gets a response on the same connection. That's the right model for most API interactions, and it's what Parts II through IV cover in depth. But it isn't the only model, and choosing it by default is itself an architecture decision worth making consciously.
+
+- **Synchronous request/response** — the caller needs the answer now and will wait for it (fetch an order, validate a form, run a search). REST / GraphQL / gRPC.
+- **Asynchronous** — the work takes longer than a caller should hold a connection for, or no single caller is waiting for "the answer" at all (a bulk import, a payment settlement, an event other systems react to). This points at `202 Accepted` + a job resource, webhooks, or a message broker — covered in Chapter 20.
+- **Streaming** — a continuous flow of messages in one or both directions rather than a single response (live updates, telemetry ingestion, large result sets). gRPC streaming, GraphQL subscriptions, or Server-Sent Events.
+
+A large share of "we chose the wrong API style" pain is really "we modeled an asynchronous interaction synchronously" — a 30-second operation forced into a blocking request. Settle the communication model first; the rest of this framework assumes you've landed on synchronous request/response.
+
 ## A decision framework, previewed
 
-The full framework arrives in Chapter 20, once you've seen the mechanics of all three. For now, the short version:
+The full framework arrives in Chapter 21, once you've seen the mechanics of all three. For now, the short version, *for synchronous request/response APIs*:
 
 - Public-facing APIs with unknown, diverse clients and a need for cacheability → **REST**.
 - Client-driven UIs (especially mobile, where every unnecessary byte costs battery and latency) with a small number of client teams you can coordinate schema changes with → **GraphQL**.
@@ -96,7 +106,7 @@ The full framework arrives in Chapter 20, once you've seen the mechanics of all 
 
 ```mermaid
 flowchart TB
-    Q["What kind of client access pattern?"]
+    Q["Synchronous request/response —<br/>what kind of client access pattern?"]
     Q --> A["Public-facing,<br/>unknown/diverse clients,<br/>needs cacheability"]
     Q --> B["Client-driven UI,<br/>small number of coordinated<br/>client teams"]
     Q --> C["Internal service-to-service,<br/>you control both ends,<br/>p99-latency sensitive"]
@@ -114,7 +124,7 @@ flowchart TB
     class REST,GraphQL,gRPC success
 ```
 
-Most real systems don't pick one. A production platform commonly runs gRPC internally between services, exposes a GraphQL gateway to first-party client apps, and maintains a REST API for third-party integrators and webhooks. Chapter 21 walks through exactly this architecture end to end.
+Most real systems don't pick one. A production platform commonly runs gRPC internally between services, exposes a GraphQL gateway to first-party client apps, maintains a REST API for third-party integrators, and publishes events to a broker that drives internal consumers and outbound webhooks. Chapter 22 walks through exactly this architecture end to end.
 
 ```mermaid
 flowchart LR

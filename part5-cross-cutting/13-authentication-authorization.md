@@ -21,7 +21,7 @@ metadata = [("authorization", f"Bearer {access_token}")]
 
 ## API keys: simpler auth for third-party and machine callers
 
-OAuth2/OIDC issues short-lived tokens tied to a specific end user's identity, obtained through an interactive login flow. A third-party seller integrating with a webhook or batch REST endpoint (Chapter 21's case study) usually isn't acting on behalf of any specific end user at all, and forcing a server-to-server integration through a full authorization-code flow is unnecessary friction for both sides. An **API key** — a long-lived, opaque credential issued directly to the integrating account — is the standard alternative for exactly this population: no login flow, no refresh cycle, just a static credential included on every request.
+OAuth2/OIDC issues short-lived tokens tied to a specific end user's identity, obtained through an interactive login flow. A third-party seller integrating with a webhook or batch REST endpoint (Chapter 22's case study) usually isn't acting on behalf of any specific end user at all, and forcing a server-to-server integration through a full authorization-code flow is unnecessary friction for both sides. An **API key** — a long-lived, opaque credential issued directly to the integrating account — is the standard alternative for exactly this population: no login flow, no refresh cycle, just a static credential included on every request.
 
 ```python
 import hashlib, secrets
@@ -42,7 +42,7 @@ async def authenticate_api_key(request) -> str:
     return seller_id
 ```
 
-Two disciplines matter more than they look: store only a hash of the key, never the raw value, so a database leak doesn't hand out working credentials directly (the same principle as password storage); and treat rotation as a first-class feature — issuing a new key with an overlapping grace period on the old one — rather than a single permanent credential a seller can never safely change without a coordinated cutover. This is the mechanism behind the per-seller rate limiting in Chapter 15 and the third-party authentication layer in Chapter 21, deliberately kept simpler and separate from the OIDC/JWT flow used for first-party clients.
+Two disciplines matter more than they look: store only a hash of the key, never the raw value, so a database leak doesn't hand out working credentials directly (the same principle as password storage); and treat rotation as a first-class feature — issuing a new key with an overlapping grace period on the old one — rather than a single permanent credential a seller can never safely change without a coordinated cutover. This is the mechanism behind the per-seller rate limiting in Chapter 15 and the third-party authentication layer in Chapter 22, deliberately kept simpler and separate from the OIDC/JWT flow used for first-party clients.
 
 ## JWT validation, done correctly
 

@@ -1,6 +1,6 @@
-# Chapter 21: Production Case Study — Solutions
+# Chapter 22: Production Case Study — Solutions
 
-*Corresponds to: [part6-synthesis/21a-production-case-study-exercises.md](../../part6-synthesis/21a-production-case-study-exercises.md)*
+*Corresponds to: [part7-synthesis/22a-production-case-study-exercises.md](../../part7-synthesis/22a-production-case-study-exercises.md)*
 
 ## Concept questions — Model answers
 
@@ -11,6 +11,8 @@
 3. The service-to-service token authenticates the gateway itself as a trusted internal caller — it proves "this request is legitimately coming from our gateway," not "this request is legitimately allowed to see this specific user's specific order." Those are two different questions. If a subgraph skipped per-field authorization on the theory that "the gateway already checked the session," it would be conflating caller authentication (is this a legitimate internal service talking to me) with end-user authorization (is this particular end user, whose identity is only available via claims embedded in the forwarded context, entitled to this particular field/record). Skipping the per-field check would mean any query the gateway forwards — regardless of which end user originally issued it — would be treated as fully authorized at the subgraph, which defeats the purpose of having per-user access control at all; the gateway's session validity check only proves someone is logged in, not that they're allowed to see this specific order.
 
 4. The mechanism is gRPC-JSON transcoding (Chapter 14): the REST API is generated directly from the same `.proto` definitions used by the internal gRPC services, annotated with HTTP mappings, rather than being a separately hand-written REST API that happens to sit in front of the same backend. Because both the REST surface and the internal gRPC contract are generated from one shared source of truth, a change to the `.proto` file automatically updates both — there is no second artifact for an engineer to remember to update in parallel, which is exactly the failure mode a hand-maintained REST API alongside a separate gRPC service is exposed to (someone changes the gRPC contract, forgets or delays updating the separately maintained REST layer, and the two silently diverge).
+
+5. The dual write was "update the database" and "publish to Kafka" as two independent operations with no shared transaction, so a broker failover between them left the state change committed but the event lost — and every system that learns about orders through events (search index, analytics, seller webhooks) silently missed those orders while the database looked fine. A transactional outbox writes the event as a row into an `outbox` table *in the same database transaction* as the state change: either both commit or neither does, so there is no window where the DB moved forward and the event didn't. A separate relay then publishes committed outbox rows to Kafka, retrying through a broker failover because the rows are durable in the database until confirmed sent. The design-review question the incident produced: "does this write to another system happen in the same transaction as the state change?"
 
 ## Design question — Model answer
 
@@ -30,7 +32,7 @@ The better answer is a **new, purpose-built layer**: a dedicated internal read p
 
 ## Quiz (self-check) — Answers
 
-1. **False.** The chapter's closing section states directly: "None of these protocols failed because they were the wrong choice at a macro level — gRPC internally, GraphQL for first-party clients, and REST for third parties remains the right shape for this platform." Both incidents traced back to specific, documented failure modes (DataLoader lifetime, deadline propagation) that weren't caught before production, not to the architecture itself being wrong.
+1. **False.** The chapter's closing section states directly that none of the protocols failed because they were the wrong choice at a macro level — gRPC internally, GraphQL for first-party clients, REST for third parties, and an event backbone with signed webhooks for asynchronous delivery remains the right shape for this platform. All three incidents traced back to specific, documented failure modes (DataLoader lifetime, deadline propagation, dual writes) that weren't caught before production, not to the architecture itself being wrong.
 2. **Headless Kubernetes Services with client-side round-robin.**
 3. **An Istio service mesh.**
 4. **The same `.proto` definitions the internal gRPC services use**, generated via gRPC-JSON transcoding annotated with HTTP mappings.

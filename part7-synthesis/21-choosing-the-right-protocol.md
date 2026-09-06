@@ -1,10 +1,16 @@
-# Chapter 20: Choosing the Right Protocol
+# Chapter 21: Choosing the Right Protocol
 
 ## Revisiting the framework from Chapter 1, with full context now
 
 By this point you've seen the mechanics, the scaling failure modes, and the operational cost of each protocol in depth. The decision framework from Chapter 1 can now be made precise rather than aspirational.
 
+## The first question is not "which protocol"
+
+Before the REST/GraphQL/gRPC choice, settle the **communication model** (Chapter 1, Chapter 20). Is this a synchronous request where a caller waits for the answer, an asynchronous operation the caller shouldn't hold a connection for, or an event that other systems need to react to without the producer knowing who they are? Only the first is a protocol choice in the sense this chapter's axes address; the second points at `202` + a job resource or a webhook, and the third at a broker and an event contract. A large fraction of "we picked the wrong protocol" pain is actually "we modeled an asynchronous interaction as a synchronous one" — no amount of REST-vs-gRPC deliberation fixes a 30-second call that should never have been a blocking request.
+
 ## The core axes
+
+Once the interaction is genuinely synchronous request/response, these are the axes:
 
 **Who is the client, and how many client teams exist?** A public API with unknown, unbounded consumers needs REST's loose, cacheable, self-describing contract — you cannot coordinate a schema migration with clients you don't have a relationship with. A small number of first-party client teams (your own mobile and web apps) can tolerate GraphQL's tighter coupling to a shared schema, because you can actually coordinate changes with them. Internal service-to-service calls, where you own both ends, can take on gRPC's compile-time contract coupling without external coordination risk.
 
@@ -25,6 +31,7 @@ By this point you've seen the mechanics, the scaling failure modes, and the oper
 | Streaming | Workarounds only (SSE, chunked) | Subscriptions (heavier-weight) | Native, all four RPC shapes |
 | Browser-native | Yes | Yes | No (needs grpc-web or a gateway) |
 | Operational complexity | Lowest | Moderate-to-high at scale | Moderate (mesh/LB awareness needed) |
+| Long-running / fire-and-forget work | `202` + job resource, or publish an event (Chapter 20) — not a blocking call | Same — subscriptions notify, they don't do the work | Same — plus a job/status RPC; streaming is not a substitute for async |
 
 ## Hybrid architectures are the norm, not the exception
 
@@ -53,12 +60,14 @@ flowchart TB
     class Internal success
 ```
 
+The same platform almost always has a fourth edge the diagram above understates: outbound webhooks to third parties and an internal event backbone (Chapter 20) that the REST and GraphQL layers publish to. Those aren't a competing protocol choice — they're the asynchronous half of the architecture, and they get their own contract (an event schema, ideally AsyncAPI-described) and their own failure modes (at-least-once delivery, dead-lettering, the dual-write problem).
+
 The mistake to avoid is not "using the wrong protocol" in isolation — it's applying one protocol's operating model to a context it wasn't designed for: exposing raw internal gRPC services directly to third-party integrators (forcing an unnecessary tooling burden on external consumers), or building a public GraphQL API without the cost-limiting and federation discipline Chapter 9 covers (an availability incident waiting to happen once external traffic diversity hits the schema).
 
 ## What's next
 
-Chapter 21 closes the book with a complete case study: a production e-commerce platform architected exactly along these lines, walked through end to end — the decisions, the trade-offs accepted, and the incidents that shaped the current design.
+Chapter 22 closes the book with a complete case study: a production e-commerce platform architected exactly along these lines, walked through end to end — the decisions, the trade-offs accepted, and the incidents that shaped the current design.
 
 ## Exercises
 
-Exercises for this chapter live in [20a-choosing-the-right-protocol-exercises.md](20a-choosing-the-right-protocol-exercises.md). Solutions are available separately in [resources/solutions/](../resources/solutions/).
+Exercises for this chapter live in [21a-choosing-the-right-protocol-exercises.md](21a-choosing-the-right-protocol-exercises.md). Solutions are available separately in [resources/solutions/](../resources/solutions/).

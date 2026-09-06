@@ -139,7 +139,7 @@ For organizations with many services and many consuming teams, a schema registry
 
 ## What's next
 
-Part VI closes the book: Chapter 20 gives the full decision framework for choosing (or combining) REST, GraphQL, and gRPC, and Chapter 21 walks through a complete production case study running all three together.
+Part VI covers asynchronous and event-driven APIs — Chapter 20 — where the same evolution discipline applies to event payloads and the delivery model itself becomes an architectural choice. Part VII then closes the book: Chapter 21 gives the full decision framework for choosing (or combining) protocols and communication models, and Chapter 22 walks through a complete production case study running all of them together.
 
 ## Exercises
 

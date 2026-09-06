@@ -1,4 +1,4 @@
-# Chapter 21: Production Case Study — A Polyglot API Platform
+# Chapter 22: Production Case Study — A Polyglot API Platform
 
 ## The system
 
@@ -24,6 +24,12 @@ Third-party sellers integrate via a REST API (Part II) that is not hand-maintain
 
 This REST API is versioned at the URI level (`/v1`, `/v2` — Chapter 6), since third-party sellers are exactly the consumer population you cannot coordinate a synchronized migration with. Rate limiting (Chapter 15) here is stricter and quota-based per seller API key, enforced at the gateway using a Redis-backed token bucket shared across all API gateway replicas.
 
+## Layer 4: Events and webhooks
+
+The synchronous REST call a seller makes to create a fulfillment is not how they learn an order shipped — that can take hours. The orders service publishes domain events (`order.placed`, `order.shipped`, `payment.settled`) to a Kafka topic keyed by order id, using the transactional outbox pattern (Chapter 20): the event row is written in the same database transaction as the state change, and a relay publishes it, so the database and the event stream can't disagree. Internal consumers — analytics, the seller-notification service, a search indexer — read the log at their own offsets.
+
+The seller-notification service turns those events into outbound **webhooks**: it `POST`s each event to the URL a seller registered, signs the body with an HMAC over `timestamp + body` using a per-seller secret, retries non-2xx responses with exponential backoff and jitter over a 24-hour window, and dead-letters (and disables, with an alert to the seller) any endpoint that fails every delivery for a day. Every event envelope carries an `event_id` and `occurred_at`, and the integration docs state plainly that delivery is at-least-once and unordered — sellers must dedupe on `event_id`.
+
 ```mermaid
 flowchart TB
     Mobile["Mobile & web apps<br/>(first-party)"]
@@ -37,6 +43,9 @@ flowchart TB
     Customer["Customer-profile service"]
     Billing["Billing service"]
 
+    Bus["Kafka topics<br/>order.* / payment.*<br/>(transactional outbox)"]
+    Hooks["Seller-notification service<br/>signed, retried webhooks"]
+
     Mobile --> Gateway
     Sellers --> RESTAPI
 
@@ -48,13 +57,20 @@ flowchart TB
     Orders <-->|gRPC| Customer
     Orders <-->|gRPC| Billing
 
+    Orders -->|outbox relay| Bus
+    Billing -->|outbox relay| Bus
+    Bus --> Hooks
+    Hooks -.->|HTTP POST, HMAC-signed| Sellers
+
     classDef client fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
     classDef security fill:#fef3c7,stroke:#d97706,color:#78350f
     classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
 
     class Mobile,Sellers client
-    class Gateway,RESTAPI security
+    class Gateway,RESTAPI,Hooks security
     class Orders,Inventory,Customer,Billing success
+    class Bus neutral
 ```
 
 ## What broke, and what the postmortems changed
@@ -83,10 +99,12 @@ sequenceDiagram
     Note over I,W: Inventory keeps working on the abandoned request,<br/>wasting capacity during the traffic spike
 ```
 
+A third incident predated the outbox: for its first year the orders service updated its database and then published `order.shipped` to Kafka as two separate calls. During a broker failover, roughly 400 shipped-order events were never published — the database was correct, but the search index, the analytics revenue numbers, and the sellers' webhooks all silently missed those orders, and the discrepancy wasn't noticed until a seller reconciliation flagged it weeks later. This is the dual-write failure mode from Chapter 20 exactly; the fix was to move every event publish behind a transactional outbox, and "does this write to another system happen in the same transaction as the state change?" became a design-review question for every new event.
+
 ## The lesson generalized
 
-None of these protocols failed because they were the wrong choice at a macro level — gRPC internally, GraphQL for first-party clients, and REST for third parties remains the right shape for this platform. Every incident traced back to a specific, well-documented failure mode from earlier in this book (DataLoader lifetime, deadline propagation) that wasn't caught before production traffic exposed it. The protocols themselves are mature and well-understood; the discipline required to operate them correctly at scale is where the actual engineering work — and the actual seniority — lives.
+None of these protocols failed because they were the wrong choice at a macro level — gRPC internally, GraphQL for first-party clients, REST for third parties, and an event backbone with signed webhooks for asynchronous delivery remains the right shape for this platform. Every incident traced back to a specific, well-documented failure mode from earlier in this book (DataLoader lifetime, deadline propagation, dual writes) that wasn't caught before production traffic exposed it. The protocols themselves are mature and well-understood; the discipline required to operate them correctly at scale is where the actual engineering work — and the actual seniority — lives.
 
 ## Exercises
 
-Exercises for this chapter live in [21a-production-case-study-exercises.md](21a-production-case-study-exercises.md). Solutions are available separately in [resources/solutions/](../resources/solutions/).
+Exercises for this chapter live in [22a-production-case-study-exercises.md](22a-production-case-study-exercises.md). Solutions are available separately in [resources/solutions/](../resources/solutions/).

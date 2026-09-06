@@ -93,7 +93,7 @@ For genuine integration tests exercising the real gRPC wire protocol (worth havi
 
 ## Contract testing across protocol boundaries
 
-For a system where a REST gateway calls a gRPC backend which is queried through a GraphQL BFF (Chapter 21's case study architecture), the most valuable and most commonly neglected test category is the one verifying the translation *between* layers is correct — that the gateway's REST response shape actually matches what the gRPC backend returned, not just that each layer works in isolation. Pact-style consumer-driven contracts (Chapter 6) generalize across protocols for exactly this purpose.
+For a system where a REST gateway calls a gRPC backend which is queried through a GraphQL BFF (Chapter 22's case study architecture), the most valuable and most commonly neglected test category is the one verifying the translation *between* layers is correct — that the gateway's REST response shape actually matches what the gRPC backend returned, not just that each layer works in isolation. Pact-style consumer-driven contracts (Chapter 6) generalize across protocols for exactly this purpose.
 
 ```mermaid
 flowchart LR

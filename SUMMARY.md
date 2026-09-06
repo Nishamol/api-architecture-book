@@ -36,7 +36,11 @@
 * [18. Testing Strategies](part5-cross-cutting/18-testing-strategies.md)
 * [19. Schema Evolution and Backward Compatibility](part5-cross-cutting/19-schema-evolution-compatibility.md)
 
-### Part VI: Putting It All Together
+### Part VI: Asynchronous and Event-Driven APIs
 
-* [20. Choosing the Right Protocol](part6-synthesis/20-choosing-the-right-protocol.md)
-* [21. Production Case Study: A Polyglot API Platform](part6-synthesis/21-production-case-study.md)
+* [20. Asynchronous and Event-Driven APIs](part6-async-apis/20-asynchronous-event-driven-apis.md)
+
+### Part VII: Putting It All Together
+
+* [21. Choosing the Right Protocol](part7-synthesis/21-choosing-the-right-protocol.md)
+* [22. Production Case Study: A Polyglot API Platform](part7-synthesis/22-production-case-study.md)

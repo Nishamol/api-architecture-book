@@ -76,6 +76,8 @@ sequenceDiagram
     S-->>C: 201 Created (same cached response, no duplicate)
 ```
 
+The in-memory dict hides two production problems. The obvious one is persistence — a process restart forgets every key. The subtler one is atomicity: under concurrent retries (exactly the network conditions that trigger a retry in the first place), two requests can both evaluate `if idempotency_key in _seen_keys`, both miss, and both create an order before either writes the key back. A correct implementation collapses "claim the key" and "record the result" into a single atomic operation — a `UNIQUE` constraint on the key column with `INSERT ... ON CONFLICT`, or a Redis `SET key NX` — so the second request loses the race deterministically and returns the first request's stored response instead of duplicating the write. "Store the key after doing the work" is not enough; the key has to be claimed before the work, atomically.
+
 ## Status codes as part of the contract
 
 Status codes are not decoration — they're machine-readable signal. `422` (validation failure) is not the same as `400` (malformed request) is not the same as `409` (conflict, e.g. optimistic concurrency failure). Clients, retry middleware, and monitoring dashboards all key off status codes; collapsing everything to `200` with an `"error"` field in the body (a surprisingly common anti-pattern) breaks every layer of standard HTTP tooling built over the last 25 years, from CDNs to service meshes to client libraries' built-in retry logic.
@@ -85,6 +87,34 @@ Status codes are not decoration — they're machine-readable signal. `422` (vali
 | 400 | Malformed request | Request body isn't valid JSON |
 | 422 | Validation failure | Well-formed JSON that fails schema validation |
 | 409 | Conflict | Optimistic concurrency failure |
+
+## Optimistic concurrency with ETags
+
+The `409` above needs a mechanism behind it. Without one, two clients that both `GET /orders/42`, both edit their copy, and both `PUT` it back produce a lost update: the second write silently overwrites the first, and neither client ever finds out. HTTP's built-in answer is the conditional write. The server returns an `ETag` (a version fingerprint) on reads; the client echoes it back on the next write as `If-Match`, and the server rejects the write with `412 Precondition Failed` (or `409`) if the resource has changed since.
+
+```
+GET /orders/42          →  200 OK, ETag: "v7"
+PUT /orders/42
+If-Match: "v7"           →  200 OK, ETag: "v8"      (nobody else wrote in between)
+
+PUT /orders/42
+If-Match: "v7"           →  412 Precondition Failed  (someone advanced it to "v8" first)
+```
+
+```python
+@app.put("/orders/{order_id}")
+async def replace_order(order_id: str, payload: dict, if_match: str = Header(...)):
+    current = await db.get_order(order_id)
+    if if_match != current["etag"]:
+        raise HTTPException(412, "order was modified by someone else; re-fetch and retry")
+    # compare-and-swap: the WHERE clause makes the check and the write atomic
+    updated = await db.update_order_if_version(order_id, expected_etag=if_match, data=payload)
+    if updated is None:
+        raise HTTPException(412, "lost the race between the check above and this write")
+    return updated
+```
+
+The `if_match != current["etag"]` check is a fast pre-filter, not the guarantee — two concurrent requests can both pass it. The actual safety comes from the conditional `UPDATE ... WHERE etag = :expected` (a compare-and-swap on a version column or row-version), which the database applies atomically; the losing request updates zero rows and gets the `412`. This is the same "claim atomically, don't check-then-act" discipline as the idempotency key above, applied to updates instead of creates. The client's correct response to `412` is to re-fetch, re-apply its change, and retry — which means the API contract should tell it so.
 
 ## Pagination, filtering, and sorting as first-class design
 
@@ -117,6 +147,7 @@ The allowlist is doing real work in both directions: it's what stops a client-su
 
 - **Action-as-noun leakage**: `POST /updateOrderStatus` instead of `PATCH /orders/42` — a sign the API was designed RPC-first and REST-wrapped after the fact.
 - **Broken idempotency**: retried `PUT` requests (common under mobile network flakiness) silently double-applying non-idempotent side effects.
+- **Non-atomic idempotency or concurrency checks**: a check-then-act (`if key in seen` / `if if_match == current.etag`) with no atomic claim behind it, so two concurrent requests both pass the check and both proceed — duplicate creates, or a lost update that overwrites another client's write with no `409`/`412`.
 - **Offset pagination drift**: clients missing or double-receiving rows during paginated exports because the underlying table was being written to concurrently.
 - **Unbounded sort/filter surface**: accepting any client-supplied field name for `sort` or a filter instead of checking it against an allowlist, risking both unindexed full-table-scan queries and, if the field name reaches a query builder unsanitized, injection.
 

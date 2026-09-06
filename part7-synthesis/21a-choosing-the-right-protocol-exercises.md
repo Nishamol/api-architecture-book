@@ -1,13 +1,14 @@
-# Chapter 20: Choosing the Right Protocol — Exercises
+# Chapter 21: Choosing the Right Protocol — Exercises
 
-*Corresponds to: [20-choosing-the-right-protocol.md](20-choosing-the-right-protocol.md)*
+*Corresponds to: [21-choosing-the-right-protocol.md](21-choosing-the-right-protocol.md)*
 
 ## Concept questions
 
-1. The chapter organizes the decision into four axes. Name all four, and for the "who is the client, and how many client teams exist?" axis, explain — using the chapter's own contrast — why a public API and a small set of first-party mobile teams lead to different protocol conclusions even though both are "just clients."
+1. The chapter organizes the synchronous decision into four axes. Name all four, and for the "who is the client, and how many client teams exist?" axis, explain — using the chapter's own contrast — why a public API and a small set of first-party mobile teams lead to different protocol conclusions even though both are "just clients."
 2. The quick-reference table lists gRPC's over/under-fetching row as "N/A (defined by proto contract)," distinct from REST's "Common problem" and GraphQL's "Solved by design." Explain why gRPC sidesteps this axis entirely rather than "solving" it the way GraphQL does.
 3. The chapter says the mistake to avoid "is not 'using the wrong protocol' in isolation." What more specific mistake does it identify instead, and how do the chapter's two examples (raw gRPC to third-party integrators, a public GraphQL API without cost-limiting discipline) both illustrate it?
 4. Using the chapter's caching-story axis, explain why REST's caching is described as "close to free at every layer" while GraphQL's requires "deliberate normalized client-side caching or persisted-query-keyed server caching." What structural property of each protocol's contract causes this difference?
+5. The chapter says "the first question is not 'which protocol.'" What question does it put first, what are the three answers it lists, and why does it claim "no amount of REST-vs-gRPC deliberation" fixes the case it has in mind?
 
 ## Design question (interview-style)
 

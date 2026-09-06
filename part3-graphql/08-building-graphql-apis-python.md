@@ -81,7 +81,7 @@ app = FastAPI()
 app.include_router(graphql_app, prefix="/graphql")
 ```
 
-This gives you a GraphQL endpoint living inside the same FastAPI app that might also serve REST endpoints and webhooks — a common pattern for platforms exposing multiple protocols (see Chapter 21's case study).
+This gives you a GraphQL endpoint living inside the same FastAPI app that might also serve REST endpoints and webhooks — a common pattern for platforms exposing multiple protocols (see Chapter 22's case study).
 
 ## The DataLoader pattern, introduced here and detailed in Chapter 9
 

@@ -1,6 +1,6 @@
-# Chapter 21: Production Case Study — A Polyglot API Platform — Exercises
+# Chapter 22: Production Case Study — A Polyglot API Platform — Exercises
 
-*Corresponds to: [21-production-case-study.md](21-production-case-study.md)*
+*Corresponds to: [22-production-case-study.md](22-production-case-study.md)*
 
 ## Concept questions
 
@@ -8,6 +8,7 @@
 2. In the deadline-propagation incident, the orders-to-inventory call had a deadline, but the chapter says inventory "kept working on requests orders had already timed out and abandoned." Explain the specific mechanical cause (what was missing when the downstream channel was created) and why this wastes capacity specifically "during exactly the traffic spike that caused the original slowness."
 3. The gateway forwards "a service-to-service token (not the original user JWT)" to each subgraph, yet the chapter insists per-field user-level authorization is still enforced at the subgraph level. Explain why skipping that per-field check — on the theory that "the gateway already checked the session" — would be a mistake, given what the service-to-service token does and doesn't represent.
 4. The chapter says the REST API for third-party sellers "cannot drift apart silently" from the internal gRPC contract. What specific mechanism (named in the chapter) guarantees this, and how does it differ from a REST API that's hand-maintained alongside a separate gRPC service?
+5. In the dual-write incident, "the database was correct, but the search index, the analytics revenue numbers, and the sellers' webhooks all silently missed those orders." Explain why moving the publish behind a transactional outbox would have prevented this, and identify what design-review question the chapter says the incident produced.
 
 ## Design question (interview-style)
 
