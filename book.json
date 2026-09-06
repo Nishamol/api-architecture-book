@@ -1,0 +1,21 @@
+{
+  "title": "API Architecture in Python: REST, GraphQL, and gRPC for Senior Engineers",
+  "author": "Nish",
+  "description": "A deep, practical guide to designing and building REST, GraphQL, and gRPC APIs in Python, written for senior and lead engineers.",
+  "language": "en",
+  "plugins": [
+    "highlight",
+    "search",
+    "anchor-navigation-ex",
+    "mermaid-gb3"
+  ],
+  "pluginsConfig": {
+    "highlight": {
+      "highlightExtensionMap": {
+        "py": "python",
+        "proto": "protobuf",
+        "graphql": "graphql"
+      }
+    }
+  }
+}
