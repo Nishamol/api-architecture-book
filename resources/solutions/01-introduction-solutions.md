@@ -12,6 +12,8 @@
 
 4. It means a GraphQL server can no longer treat "what data gets fetched" as something decided at design time, since the client's query shape is decided at request time and can nest arbitrarily deep across resolvers. A REST server's designer chooses which joins/lookups a given endpoint performs, so the worst-case cost per endpoint is known in advance. A GraphQL server has to defend against a client (or a malicious caller) constructing a query that fans out into dozens or hundreds of resolver calls in one request — the N+1 problem introduced here and detailed in Chapter 9 — which means the server needs runtime defenses like query depth limiting, complexity/cost analysis, and batching (DataLoader) that a REST server simply doesn't need, because REST's fixed endpoints already bound the work per request.
 
+5. The three models are **synchronous request/response**, **asynchronous**, and **streaming**. A 30-second bulk import is asynchronous: no client should hold an HTTP connection open for 30 seconds (connection timeouts, load-balancer idle limits, and client retries all make it fragile), and the browser that triggered it doesn't need the result on that same connection. The right shapes are `202 Accepted` plus a job resource the browser polls, or an event/webhook when done (Chapter 20). Forcing it into a synchronous request is the exact mistake the chapter names — "we modeled an asynchronous interaction synchronously" — and no REST-vs-GraphQL-vs-gRPC decision fixes it, because the problem is the communication model, not the protocol.
+
 ## Design question — Model answer
 
 - **(a) iOS/Android apps → GraphQL.** A small number of client teams you can coordinate schema changes with, strong incentive to minimize payload size and round trips (mobile battery/latency), and UI screens that commonly need differently-shaped subsets of the same underlying data — the canonical GraphQL fit described in this chapter's framework.
@@ -68,3 +70,4 @@ query {
 2. **gRPC** — the `.proto` file generates typed stubs in both client and server; a mismatched field type fails to compile rather than failing at runtime.
 3. **Third-party/external integrators** — gRPC requires HTTP/2 and Protobuf tooling that's a poor fit for browser clients and partners you don't control the tooling stack for; it's typically exposed to them via REST/JSON transcoding instead (Chapter 14).
 4. **gRPC** — `stub.GetOrder(GetOrderRequest(order_id="42"))` is a typed method call, not a hand-built URL or query string.
+5. Any three of: interaction model, client diversity, contract strength, latency, cacheability, payload/query characteristics, ownership (do you control both ends), ecosystem/operational maturity, streaming needs.

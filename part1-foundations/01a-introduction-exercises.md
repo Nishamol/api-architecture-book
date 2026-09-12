@@ -8,6 +8,7 @@
 2. A client fetching an order only needs `status`. Explain, in one sentence each, what happens on the wire for REST vs. GraphQL vs. gRPC in this scenario, and why the REST response is larger.
 3. Why does gRPC's `.proto`-generated contract catch certain bugs at build time that REST and GraphQL can only catch at runtime? Give a concrete example of a change that would break each protocol differently.
 4. "GraphQL solves over-fetching but moves complexity into the resolver graph." What does this mean concretely — what new class of problem does a GraphQL server have to defend against that a REST server doesn't?
+5. The chapter puts a "which communication model?" question ahead of the REST/GraphQL/gRPC choice. Name the three models, and for a 30-second bulk-import operation triggered by a browser, explain which model applies and why forcing it into a synchronous request is the mistake the chapter warns about.
 
 ## Design question (interview-style)
 
@@ -34,6 +35,7 @@ Write a GraphQL schema (`type Order { ... }` and a `Query` type) that would let 
 2. Which protocol's contract is enforced by the compiler/build step rather than by convention or runtime validation?
 3. Name one type of consumer for which gRPC would be a poor direct choice, and why.
 4. In the three-protocol example in this chapter, which protocol's client code contains no manual URL or query-string construction at all?
+5. Per the chapter, protocol choice within request/response is "the result of a set of constraints, not a lookup by client type." Name three of the constraints it lists.
 
 ---
 

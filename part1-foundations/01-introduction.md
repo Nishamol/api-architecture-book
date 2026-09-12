@@ -91,37 +91,78 @@ No JSON parsing, no URL construction — the client calls a typed method and get
 REST, GraphQL, and gRPC are all **synchronous request/response**: a client sends a request, waits, and gets a response on the same connection. That's the right model for most API interactions, and it's what Parts II through IV cover in depth. But it isn't the only model, and choosing it by default is itself an architecture decision worth making consciously.
 
 - **Synchronous request/response** — the caller needs the answer now and will wait for it (fetch an order, validate a form, run a search). REST / GraphQL / gRPC.
-- **Asynchronous** — the work takes longer than a caller should hold a connection for, or no single caller is waiting for "the answer" at all (a bulk import, a payment settlement, an event other systems react to). This points at `202 Accepted` + a job resource, webhooks, or a message broker — covered in Chapter 20.
-- **Streaming** — a continuous flow of messages in one or both directions rather than a single response (live updates, telemetry ingestion, large result sets). gRPC streaming, GraphQL subscriptions, or Server-Sent Events.
-
-A large share of "we chose the wrong API style" pain is really "we modeled an asynchronous interaction synchronously" — a 30-second operation forced into a blocking request. Settle the communication model first; the rest of this framework assumes you've landed on synchronous request/response.
-
-## A decision framework, previewed
-
-The full framework arrives in Chapter 21, once you've seen the mechanics of all three. For now, the short version, *for synchronous request/response APIs*:
-
-- Public-facing APIs with unknown, diverse clients and a need for cacheability → **REST**.
-- Client-driven UIs (especially mobile, where every unnecessary byte costs battery and latency) with a small number of client teams you can coordinate schema changes with → **GraphQL**.
-- Internal service-to-service calls where you control both ends, care about p99 latency, and want compile-time contract safety → **gRPC**.
+- **Asynchronous** — the work takes longer than a caller should hold a connection for, or no single caller is waiting for "the answer" at all (a bulk import, a payment settlement, an event other systems react to). Webhooks, message queues, or an event stream — covered in Chapter 20.
+- **Streaming** — a continuous flow of messages in one or both directions rather than a single response (live updates, telemetry ingestion, large result sets). gRPC streaming, Server-Sent Events, WebSockets, or a subscribed event stream.
 
 ```mermaid
 flowchart TB
-    Q["Synchronous request/response —<br/>what kind of client access pattern?"]
-    Q --> A["Public-facing,<br/>unknown/diverse clients,<br/>needs cacheability"]
-    Q --> B["Client-driven UI,<br/>small number of coordinated<br/>client teams"]
-    Q --> C["Internal service-to-service,<br/>you control both ends,<br/>p99-latency sensitive"]
+    Q["What communication model<br/>does this interaction need?"]
+    Q --> RR["Request / response"]
+    Q --> AS["Asynchronous"]
+    Q --> ST["Streaming"]
 
-    A --> REST["REST"]
-    B --> GraphQL["GraphQL"]
-    C --> gRPC["gRPC"]
+    RR --> REST["REST"]
+    RR --> GraphQL["GraphQL"]
+    RR --> gRPC["gRPC"]
+
+    AS --> WH["Webhook"]
+    AS --> QU["Queue"]
+    AS --> EV["Event / pub-sub"]
+
+    ST --> GS["gRPC streaming"]
+    ST --> SSE["SSE"]
+    ST --> WS["WebSocket"]
+    ST --> ES["Event streaming"]
 
     classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
     classDef client fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
     classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
 
     class Q neutral
-    class A,B,C client
+    class RR,AS,ST client
+    class REST,GraphQL,gRPC,WH,QU,EV,GS,SSE,WS,ES success
+```
+
+A large share of "we chose the wrong API style" pain is really "we modeled an asynchronous interaction synchronously" — a 30-second operation forced into a blocking request. Settle the communication model first; the rest of this framework assumes you've landed on synchronous request/response.
+
+## A decision framework, previewed
+
+The full framework arrives in Chapter 21, once you've seen the mechanics of all three. Within synchronous request/response, protocol choice is the *result* of a set of constraints, not a lookup by client type:
+
+- **Interaction model** — simple resource fetches, or client-driven queries over a variable graph of data?
+- **Client diversity** — a bounded set of client teams you can coordinate with, or unknown third parties you can't?
+- **Contract strength** — is a loose, self-describing contract acceptable, or do you need compile-time enforcement?
+- **Latency** — is this on a p99-sensitive internal path, or a human-facing request where tens of milliseconds don't matter?
+- **Cacheability** — does URL-keyed HTTP caching at the CDN/proxy layer materially help this workload?
+- **Payload and query characteristics** — small and uniform, or large with per-client field selection needs?
+- **Ownership** — do you control both ends, or only one?
+- **Ecosystem and operational maturity** — is your team already fluent in Protobuf toolchains and L7 load balancing, or is HTTP/JSON the path of least resistance?
+- **Streaming** — does any part of this need server-push or bidirectional streams?
+
+As a starting heuristic, those constraints tend to cluster: unknown/diverse public consumers that benefit from caching lean **REST**; a few coordinated first-party UI teams that need to minimize over-fetching lean **GraphQL**; internal service-to-service calls where you own both ends and care about p99 latency and compile-time safety lean **gRPC**. But the clustering is a consequence of the constraints, not a rule — an internal path can rationally stay REST for debuggability and HTTP-centric infra, and a public API can rationally be gRPC-with-transcoding. Chapter 21 works through the constraint set in full.
+
+```mermaid
+flowchart TB
+    C["Synchronous request/response —<br/>weigh the constraints"]
+    C --> F1["Diverse/unknown consumers<br/>+ cacheability matters"]
+    C --> F2["Few coordinated client teams<br/>+ variable per-screen data needs"]
+    C --> F3["You own both ends<br/>+ p99 latency + compile-time contract"]
+
+    F1 -->|typical fit| REST["REST"]
+    F2 -->|typical fit| GraphQL["GraphQL"]
+    F3 -->|typical fit| gRPC["gRPC"]
+
+    C -.-> Note["A single constraint can override the cluster:<br/>internal REST for debuggability, public gRPC via transcoding,<br/>GraphQL BFF in front of gRPC services"]
+
+    classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    classDef client fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
+    classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+
+    class C neutral
+    class F1,F2,F3 client
     class REST,GraphQL,gRPC success
+    class Note warn
 ```
 
 Most real systems don't pick one. A production platform commonly runs gRPC internally between services, exposes a GraphQL gateway to first-party client apps, maintains a REST API for third-party integrators, and publishes events to a broker that drives internal consumers and outbound webhooks. Chapter 22 walks through exactly this architecture end to end.
