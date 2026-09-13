@@ -88,6 +88,18 @@ flowchart LR
 
 For client apps you control (mobile, first-party web), **persisted queries** let the server store the set of approved query documents (keyed by hash) ahead of time; the client sends only the hash, not the full query text, at request time. This eliminates arbitrary query injection entirely for that client population, cuts request payload size, and lets the server reject any query hash it doesn't recognize — effectively converting GraphQL's open query surface back into something closer to REST's fixed-endpoint model, for the subset of traffic where that trade-off makes sense.
 
+## Subscriptions and real-time at scale
+
+Chapter 7 introduces subscriptions as GraphQL's real-time primitive; at production scale, they fail differently than queries and mutations do, because a subscription isn't a request-response cycle that finishes — it's a long-lived connection the server has to hold open and actively push to, for every subscribed client, indefinitely.
+
+**Connection state is the new resource to manage.** A resolver server that's stateless between requests for queries and mutations suddenly has to track, per open WebSocket, which subscriptions are active and what filter arguments each one was created with — state that has to survive as long as the connection does, and be cleaned up correctly on disconnect or it leaks. This is the same operational shape as a gRPC server-streaming RPC (Chapter 12): a slow or disconnected subscriber that isn't detected promptly holds resources open for no one.
+
+**Fan-out needs a broker, not an in-process pub/sub.** A naive implementation publishes an event directly to any in-process subscriber list — which works for a single server process and breaks the moment you run more than one, since a mutation handled by server A has no way to notify a subscriber connected to server B. Production subscription servers sit behind a broker (Redis pub/sub, Kafka, or a managed service like Apollo's) that every server instance publishes to and subscribes from, so an event triggered anywhere reaches every matching subscriber regardless of which instance they're connected to.
+
+**Horizontal scaling is a connection-count problem, not a request-throughput problem.** Query and mutation traffic scales the way REST traffic does — more requests, spread across more stateless instances. Subscription traffic scales by *concurrent open connections*, which behaves more like a chat server's scaling problem than an API's: a single instance can only hold so many WebSockets open before hitting file-descriptor or memory limits, independent of how much actual message volume is flowing through them. Capacity planning for a subscription-heavy graph has to budget for peak concurrent connections, not peak requests-per-second.
+
+**Backpressure applies per-subscriber, not per-request.** If one subscriber's client is slow to consume (a flaky mobile connection) while a hundred others are healthy, the server has to avoid letting that one slow consumer's buffer growth affect the others — the same per-consumer isolation Chapter 16's bulkhead pattern applies to downstream dependencies, applied here to downstream *consumers* of a stream.
+
 ## Federation: splitting the graph across services
 
 Once a GraphQL schema spans multiple teams' domains (orders, inventory, customer profile, billing), a single monolithic resolver service becomes an organizational bottleneck. **Federation** (via Apollo Federation or the newer GraphQL Fusion spec) lets each team own a subgraph — a schema fragment plus its resolvers — and a gateway composes them into one graph at query time, routing each field to the subgraph that owns it.
@@ -140,6 +152,7 @@ REST's URL-keyed HTTP caching doesn't map cleanly onto GraphQL, since every quer
 - **N+1 shipped to production undetected**: works fine in development/staging with small datasets, degrades catastrophically once list sizes hit real-world scale.
 - **No cost limiting on a public-facing schema**: a single deeply nested or broadly-fanned-out query taking down a resolver service, functioning as an accidental (or deliberate) denial-of-service vector.
 - **Federation without cross-service N+1 awareness**: a federated query fanning out to a dozen backend services per client request, each one individually fine in isolation but collectively saturating the mesh.
+- **In-process pub/sub behind subscriptions**: a subscription server that only notifies its own in-process subscriber list, so a mutation handled by one instance silently never reaches subscribers connected to any other instance once traffic is load-balanced across more than one server.
 
 ## What's next
 

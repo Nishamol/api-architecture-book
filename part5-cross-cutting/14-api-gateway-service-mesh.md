@@ -49,6 +49,7 @@ A plain reverse proxy makes no policy decisions at all — it's the layer everyt
 - **Authentication termination**: validating tokens once at the edge rather than in every downstream service (though defense-in-depth argues for re-validating at least the token's presence downstream too).
 - **Rate limiting and quota enforcement**: covered in depth in Chapter 15, but the gateway is the natural enforcement point for per-client quotas.
 - **Request/response transformation**: adapting a legacy client's expected payload shape without changing the underlying service.
+- **Response caching**: the gateway is a natural place to cache whole responses for cacheable REST routes (Chapter 2's `Cache-Control`/`ETag` mechanics, enforced or overridden centrally rather than trusted to each backend team) or persisted-query results for GraphQL (Chapter 9), so a cache hit never even reaches the services behind it. This is architecturally distinct from the CDN/browser caching Chapter 2 covers — a gateway cache sits *inside* your infrastructure, closer to the origin, and is often what actually enforces the `Vary`-on-`Authorization` discipline Chapter 3 describes, since the gateway is where authentication is already being terminated and can be factored into the cache key correctly.
 
 ## gRPC-to-REST/JSON translation
 

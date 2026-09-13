@@ -4,7 +4,25 @@
 
 The framework you pick isn't a style preference — it fixes your concurrency model, how validation and dependency injection work, what middleware is available, and how the service gets deployed and operated. Those effects outlast whichever framework happens to be fashionable this year.
 
-**FastAPI** is built on Starlette (ASGI) and Pydantic. It's async-native, generates OpenAPI schemas automatically from type hints, and is a popular choice for greenfield Python APIs, particularly where async I/O and type-driven validation matter. **Django REST Framework (DRF)** is built on Django's WSGI core — its async support has been growing and continues to evolve — and earns its keep when you need Django's ORM, admin panel, and migrations ecosystem — most commonly when the API sits inside a larger Django monolith rather than as a standalone service. **Flask** with Flask-RESTful or Flask-Smorest remains common in legacy codebases and is still a reasonable choice for small, mostly synchronous services, though it leaves async performance and request validation for you to add yourself.
+**FastAPI** is built on Starlette (ASGI) and Pydantic. It's async-native, generates OpenAPI schemas automatically from type hints, and is a strong default for many greenfield Python APIs, particularly where async I/O and type-driven validation matter. **Django REST Framework (DRF)** is built on Django's WSGI core — its async support has been growing and continues to evolve — and earns its keep when you need Django's ORM, admin panel, and migrations ecosystem — most commonly when the API sits inside a larger Django monolith rather than as a standalone service. **Flask** with Flask-RESTful or Flask-Smorest remains common in legacy codebases and is still a reasonable choice for small, mostly synchronous services, though it leaves async performance and request validation for you to add yourself.
+
+## Framework choice vs. API architecture
+
+Everything in this chapter — Starlette, Pydantic, `Depends`, Uvicorn workers — sits at the bottom of a stack of decisions, and it's worth being explicit about the layering so a reader doesn't come away equating "I know FastAPI" with "I understand this API's architecture":
+
+```
+API architecture
+      ↓
+protocol            (REST, GraphQL, gRPC — Chapter 21's decision)
+      ↓
+contract             (the resource model, OpenAPI schema — Chapter 3, Chapter 5)
+      ↓
+service boundary      (what this service owns, what it calls, sync or async — Chapter 21's five axes)
+      ↓
+framework implementation   (FastAPI, DRF, Flask — this chapter)
+```
+
+The top three layers don't change if you swap FastAPI for Django REST Framework, or rewrite the same service in Go or Java — the resource model, the HTTP contract, and the service's boundaries are architecture decisions that outlive any particular framework or language choice. The framework is where those decisions get executed, and a good framework (FastAPI's `response_model` allowlisting, its automatic OpenAPI generation from the same types that validate requests) makes the layers above it easier to keep honest — but the framework itself is an implementation detail, not the architecture. A team that has mastered FastAPI's `Depends` system but never asked whether `/orders/42/cancel` should be a `POST` action or a `PATCH` to a status field (Chapter 3) has learned a tool, not API design.
 
 This chapter uses FastAPI for code examples, since its async-first design maps cleanly onto gRPC-adjacent microservices — but the design principles apply regardless of framework.
 

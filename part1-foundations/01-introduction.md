@@ -92,7 +92,7 @@ REST, GraphQL, and gRPC are all **synchronous request/response**: a client sends
 
 - **Synchronous request/response** — the caller needs the answer now and will wait for it (fetch an order, validate a form, run a search). REST / GraphQL / gRPC.
 - **Asynchronous** — the work takes longer than a caller should hold a connection for, or no single caller is waiting for "the answer" at all (a bulk import, a payment settlement, an event other systems react to). Webhooks, message queues, or an event stream — covered in Chapter 20.
-- **Streaming** — a continuous flow of messages in one or both directions rather than a single response (live updates, telemetry ingestion, large result sets). gRPC streaming, Server-Sent Events, WebSockets, or a subscribed event stream.
+- **Streaming** — a continuous flow of messages in one or both directions rather than a single response (live updates, telemetry ingestion, large result sets). gRPC streaming, Server-Sent Events, WebSockets, or a subscribed event stream. SSE and WebSockets solve different shapes of this: SSE is server-to-client only, rides on plain HTTP, and gets reconnection handling for free from the browser — the right default when the client only ever receives (a live order-status feed, a progress indicator). WebSockets are bidirectional and need their own reconnect/heartbeat logic, but are necessary the moment the client also needs to send messages on the same connection (chat, collaborative editing) — reaching for a WebSocket when SSE would do just adds protocol and infrastructure the interaction doesn't need.
 
 ```mermaid
 flowchart TB

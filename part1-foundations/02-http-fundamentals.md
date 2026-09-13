@@ -164,6 +164,12 @@ flowchart LR
     class S1a,S1b,S1c,S2,S3 success
 ```
 
+## DNS resolution: the step before any of this
+
+Before a TCP handshake, a TLS handshake, or an HTTP request can happen at all, the client has to resolve a hostname to an IP address — a round trip of its own, to a resolver that may or may not have the answer cached. A fresh, uncached DNS lookup adds real latency on top of everything else in this chapter, which is why a connection reused across many requests (below) amortizes not just the TLS handshake but the DNS lookup too — one resolution serves every request sent over that connection's lifetime, not just the first one.
+
+DNS caching cuts both ways operationally. A short TTL means clients notice a changed IP (a failover, a deployment behind a new load balancer) quickly, at the cost of more frequent lookups; a long TTL reduces lookup overhead but means a client can keep sending traffic to a now-stale address for as long as its cache entry lives — a common cause of "we failed over but some clients kept hitting the old instance for minutes." This matters directly for gRPC's client-side load balancing (Chapter 12): a client that resolves backend addresses via DNS is only as fresh as its resolver's cache, so a backend added or removed from the DNS record doesn't take effect for existing long-lived connections until they're re-resolved — one more reason a headless Kubernetes Service or a service registry (Chapter 12) is often preferred over relying on DNS TTLs alone for that specific use case.
+
 ## TLS overhead and connection reuse
 
 Every new TLS connection costs a handshake — one to three round trips depending on TLS version and session resumption support. This is why connection pooling is not an optimization, it's a requirement: a REST client that opens a fresh connection per request pays the TLS handshake cost every time. gRPC channels are designed to be long-lived and reused across many calls specifically to amortize this cost to near zero.
@@ -221,6 +227,7 @@ A Layer 4 (TCP) load balancer distributes connections without understanding HTTP
 - **Connection pool exhaustion**: REST clients that don't reuse connections under high concurrency exhaust ephemeral ports or hit backend connection limits.
 - **gRPC load imbalance**: long-lived HTTP/2 connections pinned to one backend by a Layer 4 load balancer, causing uneven CPU load across a service's pods.
 - **Head-of-line blocking misdiagnosis**: intermittent latency spikes attributed to application code that are actually TCP-level retransmission stalls on a shared HTTP/2 connection.
+- **Stale DNS caching outliving a failover**: clients holding a long-TTL-cached IP for a backend that no longer exists, continuing to send (and fail) requests for minutes after traffic was supposed to have moved.
 
 ## What's next
 

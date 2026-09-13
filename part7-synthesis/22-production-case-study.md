@@ -45,6 +45,8 @@ flowchart TB
 
     Bus["Kafka topics<br/>order.* / payment.*<br/>(transactional outbox)"]
     Hooks["Seller-notification service<br/>signed, retried webhooks"]
+    Analytics["Analytics consumer<br/>(own offset, own pace)"]
+    Search["Search indexer<br/>(own offset, own pace)"]
 
     Mobile --> Gateway
     Sellers --> RESTAPI
@@ -60,6 +62,8 @@ flowchart TB
     Orders -->|outbox relay| Bus
     Billing -->|outbox relay| Bus
     Bus --> Hooks
+    Bus --> Analytics
+    Bus --> Search
     Hooks -.->|HTTP POST, HMAC-signed| Sellers
 
     classDef client fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
@@ -70,10 +74,26 @@ flowchart TB
     class Mobile,Sellers client
     class Gateway,RESTAPI,Hooks security
     class Orders,Inventory,Customer,Billing success
-    class Bus neutral
+    class Bus,Analytics,Search neutral
 ```
 
-## A worked scenario: the notification service is down
+Every one of the four independent consumers on the bus — the seller-notification service, analytics, the search indexer, and (in the scenarios below) billing's own event reactions — reads the same log at its own offset and its own pace. That's the architectural point of a log-based stream over direct calls: adding a fifth consumer tomorrow (fraud detection, say) means subscribing to the existing topic, not modifying the orders service or coordinating a deploy with it.
+
+## Seven forces this architecture has to survive
+
+A diagram of boxes and arrows says nothing about whether the design actually holds up. Seven concrete failures, run through the same system, are what actually test it — each one is a different chapter's mechanism showing up as the thing standing between "handled" and "incident":
+
+1. **Inventory succeeds, payment fails.** Orders and billing are separate services with separate local transactions — there's no database transaction spanning both, so "roll it back" isn't a single operation. This is exactly the saga shape from Chapter 20: the failed payment triggers a compensating action (release the inventory reservation) published as its own event, not a rollback. Orchestration versus choreography (Chapter 20) decides whether orders itself drives that compensation explicitly or inventory reacts to a `payment.failed` event on its own — either way, the order sits in a first-class `payment_failed` state, not silently vanishes.
+2. **The mobile client is offline when the response would arrive.** A `createOrder` mutation that takes long enough to complete but the client's connection has already dropped is exactly the "should this have been synchronous at all" question from Chapter 1 and Chapter 20 — the fix isn't a longer timeout, it's treating order creation as job-shaped: return fast with a job/order id, let the client re-fetch order status on reconnect (or receive a push notification) rather than depending on holding one connection open across a mobile network drop.
+3. **A third-party seller needs to learn about a state change asynchronously.** This is the webhook scenario, and it's worth walking in full below rather than summarizing — it's where the largest number of this book's mechanisms have to cooperate correctly at once.
+4. **10,000 events arrive at once** — a bulk relabeling job touches every order in a large batch, or a partner's backfill fires a burst of updates. This is Chapter 12's backpressure problem, generalized from a single streaming RPC to an entire consumer: if the seller-notification service can only process 1,000 events/sec against a sudden 10,000/sec inflow, Kafka's retention absorbs the burst (Chapter 20) without data loss, consumer lag (Chapter 17) climbs and is the visible signal, and the webhook layer's own rate limiting (Chapter 15) protects individual sellers' endpoints from receiving that same burst compressed into a few seconds.
+5. **The inventory service changes its event schema.** A field renamed or retyped on `order.placed`'s payload is a breaking change under Chapter 19's rules regardless of how many services read that topic, and — because the schema is compatibility-checked in CI (Chapter 19) with the same discipline as the internal `.proto` contracts — the change either ships as additive (a new field, old consumers unaffected) or goes through a deprecation window with tolerant-reader consumers, not as a surprise that silently corrupts the analytics consumer's read path.
+6. **Billing responds slowly under load.** The order-creation call chain has a deadline budget (Chapter 10) that includes the hop to billing; a billing service running slow either returns within its allotted slice of that budget or the whole chain aborts with `DEADLINE_EXCEEDED` rather than the customer waiting indefinitely — and a circuit breaker (Chapter 16) in front of billing means that once it's clearly unhealthy, orders stops sending it doomed calls and fails fast instead of piling up threads waiting on a service that isn't going to answer.
+7. **A client retries a payment request after a timeout.** The client can't tell whether its first `createOrder` call actually succeeded before the connection dropped — retrying blindly risks a duplicate charge. This is Chapter 3's idempotency-key discipline applied to the gateway's mutation: the client sends the same idempotency key on the retry, and orders' atomic claim-then-write (not check-then-act) guarantees the second attempt returns the first attempt's result instead of creating a second order and a second charge.
+
+Scenarios 1, 2, 4, 5, and 7 are each a self-contained illustration of one mechanism; scenario 6 already showed up as a real incident below. Scenario 3 is worth more than a paragraph, because it's the one where the most independent mechanisms have to hold simultaneously — that's next.
+
+## Scenario 3, walked in full: the notification service is down
 
 Put a concrete failure through the whole stack at once: a customer places an order on the mobile app. Payment succeeds. Inventory reservation succeeds. The seller-notification service — the one that turns Kafka events into outbound webhooks — is temporarily unavailable. What actually happens, layer by layer?
 
@@ -85,7 +105,7 @@ Put a concrete failure through the whole stack at once: a customer places an ord
 6. **What an operator sees.** Consumer lag on the notification service's Kafka group (Chapter 17) climbs while it's down and drains once it recovers — that lag metric is the whole story, visible before a single seller complains. A trace (Chapter 17) for any individual order shows the REST/GraphQL/gRPC synchronous portion completing normally, with the event-to-webhook leg appearing as a separately timed, asynchronous continuation rather than blocking or failing the original request's trace.
 7. **What doesn't need to change.** No REST or GraphQL contract changed. No `.proto` changed. This entire failure and recovery sequence is absorbed by the async layer's design (the outbox, the log's retention, offset-based consumer state, idempotent delivery) without the synchronous protocols even being aware anything went wrong — which is the actual point of decoupling order creation from notification delivery in the first place, and the reason Layer 4 exists as a separate architectural layer rather than one more synchronous call bolted onto order creation.
 
-The scenario doesn't introduce a new failure mode — it's a composition of mechanisms this book already covers individually (deadlines, the outbox, consumer offsets, idempotent webhook delivery, retry-with-backoff, consumer-lag observability, and field-level authorization) demonstrating why each one has to be in place *together*: remove any single piece — no outbox, no idempotency key, no lag metric — and this same scenario turns into one of the incidents below instead of a non-event.
+The scenario doesn't introduce a new failure mode — it's a composition of mechanisms this book already covers individually (deadlines, the outbox, consumer offsets, idempotent webhook delivery, retry-with-backoff, consumer-lag observability, and field-level authorization) demonstrating why each one has to be in place *together*: remove any single piece — no outbox, no idempotency key, no lag metric — and this same scenario turns into one of the incidents below instead of a non-event. The other six scenarios above are the same exercise at less length: pick any one of them, remove the mechanism named as its answer, and it stops being a scenario the architecture survives and becomes the next postmortem.
 
 ## What broke, and what the postmortems changed
 

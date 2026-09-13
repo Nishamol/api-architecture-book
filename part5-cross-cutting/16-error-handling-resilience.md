@@ -187,6 +187,10 @@ sequenceDiagram
 
 Not every failure needs to become a user-facing error. If a "recommended products" service is down but the "get order" service is healthy, a well-designed order-detail endpoint should return the order with an empty recommendations section rather than failing the entire response — a distinction that requires explicitly designing which parts of a response are essential versus best-effort, rather than treating every downstream call as equally critical by default.
 
+## Where this chapter's patterns stop being enough
+
+Retries, circuit breakers, bulkheads, and deadline propagation all assume the failure is local to one call — the operation either completes, or it doesn't, and the caller can find out which. That model breaks down the moment a single business operation spans multiple services with no shared transaction: "place order" might mean orders, inventory, and billing each commit their own local change, and there's no single call to retry or circuit-break your way out of a partial failure across three independent databases. At that point, resilience within one call is necessary but not sufficient — the architecture needs an explicit answer for "inventory reserved, payment failed, now what," which is what Chapter 20's sagas, compensating actions, and the transactional outbox are for. This chapter's patterns keep any *one* hop honest; Chapter 20 is what keeps the whole multi-service operation honest when no hop alone can guarantee the outcome.
+
 ## Failure modes
 
 - **Retrying non-idempotent operations**: retrying a payment-charge call without an idempotency key (Chapter 3), resulting in duplicate charges during exactly the network conditions that make retries tempting.
