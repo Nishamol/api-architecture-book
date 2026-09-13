@@ -6,7 +6,7 @@ Junior teams pick an API style because it's what the framework tutorial used. Se
 
 ## Three protocols, three contracts
 
-**REST** is a resource-oriented style built on HTTP semantics. A REST API exposes nouns (`/orders/42`) and lets HTTP verbs (`GET`, `POST`, `PATCH`, `DELETE`) express intent. Its contract is loose *at the protocol level* — HTTP itself enforces media types and status codes but not payload shape. Teams routinely impose a strong contract on top with OpenAPI, JSON Schema, and consumer-driven contract tests; the point is that this is a discipline the organization adds, not something the protocol checks for you the way a GraphQL schema or a `.proto` file does. That looseness is REST's biggest strength (any HTTP client can talk to it, caching works for free) and, left undisciplined, its biggest weakness (over-fetching, under-fetching, and undocumented payload drift).
+**REST** is a resource-oriented style built on HTTP semantics. A REST API exposes nouns (`/orders/42`) and lets HTTP verbs (`GET`, `POST`, `PATCH`, `DELETE`) express intent. Its contract is loose *at the protocol level* — HTTP itself enforces media types and status codes but not payload shape. Teams routinely impose a strong contract on top with OpenAPI, JSON Schema, and consumer-driven contract tests; the point is that this is a discipline the organization adds, not something the protocol checks for you the way a GraphQL schema or a `.proto` file does. That looseness is REST's biggest strength — any HTTP client can talk to it, and HTTP provides standardized caching semantics (Chapter 2) that a REST API can take advantage of by setting the right headers, not automatically — and, left undisciplined, its biggest weakness (over-fetching, under-fetching, and undocumented payload drift).
 
 **GraphQL** is a query-oriented style built on a single endpoint and a strongly typed schema. The client specifies the exact shape of the data it wants, and the server resolves it field by field. This solves REST's over-fetching problem at the cost of moving complexity into the resolver graph — a single query can now trigger dozens of downstream calls, and the server has to defend itself against expensive queries at request time rather than at design time.
 
@@ -15,7 +15,7 @@ Junior teams pick an API style because it's what the framework tutorial used. Se
 | Aspect | REST | GraphQL | gRPC |
 |---|---|---|---|
 | Contract | Loose at the protocol level — HTTP verbs and media types; strong payload contracts (OpenAPI/JSON Schema) are a convention layered on top | Strongly typed schema; client specifies the exact shape it wants | Contract-first `.proto` file; generates typed client/server stubs |
-| Biggest strength | Any HTTP client can talk to it; caching works for free | Solves over-fetching and under-fetching | Compact binary wire format, strong typing, native streaming |
+| Biggest strength | Any HTTP client can talk to it; standardized HTTP caching semantics are available when headers are set correctly | Solves over-fetching and under-fetching | Compact binary wire format, strong typing, native streaming |
 | Biggest weakness | Over-fetching, under-fetching, undocumented payload drift | Complexity moves into the resolver graph; server must defend against expensive queries | Not browser-native; trades human-readability for performance |
 
 ## Same operation, three shapes
@@ -165,24 +165,28 @@ flowchart TB
     class Note warn
 ```
 
-Most real systems don't pick one. A production platform commonly runs gRPC internally between services, exposes a GraphQL gateway to first-party client apps, maintains a REST API for third-party integrators, and publishes events to a broker that drives internal consumers and outbound webhooks. Chapter 22 walks through exactly this architecture end to end.
+Most real systems don't pick one. A production platform commonly runs gRPC internally between services, exposes a GraphQL gateway to first-party client apps, maintains a REST API that third-party integrators call into, and — running the other direction entirely — publishes events to a broker that drives internal consumers and delivers outbound webhooks to those same integrators' own endpoints. It's worth keeping that last pair straight: a REST API is *your* server receiving requests; a webhook is *your* system making the request, to a URL someone else registered. They're both part of serving third-party integrators, but they're opposite communication directions with opposite failure modes (Chapter 20 covers webhooks as a client-role design problem, not just an endpoint you expose). Chapter 22 walks through exactly this architecture end to end.
 
 ```mermaid
 flowchart LR
     Mobile["Mobile / web apps<br/>(first-party clients)"] --> GW["GraphQL gateway"]
-    ThirdParty["Third-party integrators<br/>+ webhook consumers"] --> REST["REST API"]
+    ThirdParty["Third-party integrators"] -->|"calls in"| REST["REST API"]
+    Broker["Event broker"] -->|"calls out"| WebhookEndpoint["Third-party's<br/>webhook endpoint"]
 
     GW --> SvcA["Internal service A"]
     REST --> SvcA
     SvcA <-->|gRPC| SvcB["Internal service B"]
+    SvcA -.->|publishes events| Broker
 
     classDef client fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
     classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
     classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
 
     class Mobile,ThirdParty client
     class GW,REST neutral
     class SvcA,SvcB success
+    class Broker,WebhookEndpoint warn
 ```
 
 ## What "senior-level" means for this book

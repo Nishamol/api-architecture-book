@@ -115,6 +115,22 @@ type Order {
 }
 ```
 
+## The API threat model: authentication solves less than it looks like
+
+Authentication at the gateway (Chapter 14) tells you who's calling. It does not tell you what they're allowed to touch, and most real API vulnerabilities live in that gap — a request from a perfectly authenticated, legitimate user, asking for something that user shouldn't get. A useful mental model for what to actually defend against, beyond "check the token":
+
+- **BOLA / IDOR** (Broken Object Level Authorization / Insecure Direct Object Reference) — `GET /orders/42` returns order 42 to any authenticated caller, not just its owner. Consistently OWASP's #1 API risk, and the direct motivation for the object-level check in this chapter's diagram below.
+- **Broken function-level authorization** — an authenticated regular user calling an admin-only endpoint (`DELETE /users/7`) that checks authentication but never checks role, because the route exists and nothing rejects the call.
+- **Mass assignment** — an update endpoint that deserializes the entire request body onto a model, so a client can set fields it was never meant to control (`{"role": "admin"}` slipped into a profile-update payload) because nothing allowlists which fields a given caller may write, only which fields exist.
+- **Excessive data exposure** — an endpoint returning a full internal object and relying on the client to discard fields it shouldn't have seen, rather than the server only ever serializing an explicit response shape (Chapter 4's `response_model` allowlist exists specifically to close this).
+- **Replay attacks** — a captured, valid request (or a valid webhook delivery, or a valid signed URL) resent later to repeat its effect; the timestamp-in-signature technique in Chapter 20's webhook section is the standard defense.
+- **SSRF** (Server-Side Request Forgery) — an API that fetches a client-supplied URL on the server's behalf (a webhook registration URL, an image-fetch-by-URL feature) becoming a way to make the server issue requests to internal infrastructure the client couldn't otherwise reach.
+- **Credential abuse** — leaked or brute-forced API keys and tokens used directly; this is what makes key rotation and hashed-at-rest storage (this chapter's API key section) load-bearing rather than optional hygiene.
+- **Webhook signature verification gaps** — accepting an inbound webhook without verifying its HMAC signature, letting anyone who finds the endpoint URL forge events (Chapter 20 covers signing on the sending side; the receiver has to actually check it).
+- **GraphQL query abuse** — a query engineered to be expensive rather than malicious in the traditional sense (Chapter 9's depth/cost limiting), or one that uses field-level access to reach data a query-level check didn't anticipate (this chapter's field-level authorization gap, below).
+
+The throughline: authentication is a precondition for authorization, not a substitute for it. A gateway that terminates authentication centrally (Chapter 14) has correctly solved "is this a legitimate caller" — every item on this list is a way "yes, but should *this* caller do *this specific thing*" still gets skipped downstream.
+
 ## Failure modes
 
 ```mermaid

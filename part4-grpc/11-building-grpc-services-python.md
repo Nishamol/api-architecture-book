@@ -68,13 +68,16 @@ if __name__ == "__main__":
     asyncio.run(serve())
 ```
 
-`grpc.aio` is the async-native server implementation and is the correct default for new services in 2026 — the older synchronous `grpc.server` with a thread pool executor still exists and is common in legacy codebases, but forces a thread-per-concurrent-call model that doesn't scale as cleanly as native asyncio for I/O-bound service handlers.
+`grpc.aio` is the async-native server implementation, and it's a natural choice for I/O-bound Python services that already use `asyncio` elsewhere — handlers spend most of their time waiting on a database, another service, or a downstream RPC, and native async concurrency handles that without a thread per in-flight call. The older synchronous `grpc.server`, backed by a thread pool executor, still exists and remains a reasonable choice, particularly for CPU-bound workloads: a handler that spends its time on actual computation (not I/O wait) doesn't benefit from `asyncio` at all, and mixing CPU-bound work into an async handler risks the same event-loop-blocking failure mode Chapter 4 covers for FastAPI — a synchronous, thread-pool-based server sidesteps that risk by construction, since each call already runs in its own thread.
+
+The two models can also interoperate: a `grpc.aio` service can offload a genuinely CPU-bound handler to a process pool via `run_in_executor` (the same pattern as Chapter 4's FastAPI example), and a sync `grpc.server` can call into async code by running its own event loop per worker thread. Neither model is universally correct — the right choice tracks what the handlers actually spend their time doing.
 
 | | `grpc.aio` (async) | `grpc.server` + thread pool (sync) |
 |---|---|---|
 | Concurrency model | Native asyncio | Thread-per-concurrent-call via executor |
-| Recommended for | New services, 2026 default | Legacy codebases |
-| Scaling for I/O-bound handlers | Scales cleanly | Doesn't scale as cleanly |
+| Best fit | I/O-bound handlers, especially in an already-async codebase | CPU-bound handlers, or a codebase without an existing asyncio investment |
+| Scaling for I/O-bound handlers | Scales cleanly | Costs a thread per concurrent call |
+| Scaling for CPU-bound handlers | Needs explicit offload to a process pool | Scales naturally — each call already has its own thread |
 
 ## Interceptors: cross-cutting logic without repeating yourself
 

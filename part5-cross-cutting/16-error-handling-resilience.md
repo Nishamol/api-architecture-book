@@ -21,6 +21,22 @@ Machine-readable `code` values (not just human-readable `message` strings) matte
 
 Retrying is safe for idempotent operations (Chapter 3) and transient failures (network blip, brief backend unavailability); it's actively harmful for non-idempotent operations without an idempotency key, and pointless for permanent failures (`404`, `422`, `INVALID_ARGUMENT`) that will fail identically on every attempt.
 
+Whether a status code is retryable isn't a property of the status code alone — it's the status code *combined with* whether the operation behind it is idempotent:
+
+| Status | Retry? | Why |
+|---|---|---|
+| 400 Bad Request | No | The request is malformed; retrying sends the same malformed request |
+| 401 Unauthorized | No (refresh and retry once) | Refresh the token first — retrying with the same expired credential just fails again |
+| 404 Not Found | Usually no | The resource doesn't exist; a bare retry won't change that (an exception: a brief propagation delay right after creation) |
+| 409 Conflict | Depends | Safe to retry *after re-fetching current state* (Chapter 3's `412`/`409` optimistic-concurrency flow) — retrying the identical stale request just conflicts again |
+| 429 Too Many Requests | Usually, after the indicated delay | Retry, but only after `Retry-After` (Chapter 15) — an immediate retry compounds the overload that caused the `429` |
+| 500 Internal Server Error | Maybe | Ambiguous by nature — the server may have already completed a non-idempotent side effect before failing; only safe to retry blindly if the operation is idempotent or carries an idempotency key |
+| 502 Bad Gateway | Often | Usually means the request never reached the origin service — but "usually" isn't "always," so the same idempotency caveat as 500 applies |
+| 503 Service Unavailable | Often | The service is overloaded or draining, not broken; back off (ideally per `Retry-After`) and retry |
+| 504 Gateway Timeout | Often, with the same caveat as 500/502 | The origin may have received and even completed the request before the gateway gave up waiting — a non-idempotent operation behind a `504` needs an idempotency key to retry safely, not just a timer |
+
+The pattern across the ambiguous rows (409, 500, 502, 504) is the same one Chapter 3 introduces for `POST`: whenever it's unclear whether the server-side effect already happened, retrying a non-idempotent operation risks duplicating it — a double-charged payment, a duplicate order — which is exactly why idempotency keys (Chapter 3) and retry logic have to be designed together, not as two independent concerns. A retry policy that doesn't know which operations are idempotent isn't a complete retry policy; it's a bet that nothing it retries has a side effect.
+
 ```python
 import asyncio
 import random

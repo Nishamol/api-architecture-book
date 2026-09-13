@@ -72,6 +72,24 @@ Fixed windows (e.g., "100 requests per minute, resetting on the minute") allow a
 
 A **leaky bucket** inverts the token bucket's framing: instead of a pool of permits that a burst can spend all at once, requests enter a fixed-size queue and leave — get processed — at a constant rate no matter how bursty their arrival was. That's a genuinely different guarantee: token bucket answers "how much can a client send right now," leaky bucket answers "how fast can anything downstream ever actually be hit," which is why it shows up more in traffic-shaping contexts (protecting a fixed-capacity worker pool or a downstream system with a hard throughput ceiling) than in client-facing rate limiting, where token bucket's burst tolerance is usually the behavior you actually want to offer callers.
 
+## Quotas are not rate limits
+
+The two get conflated because both look like "a number and a limit," but they answer different questions and are usually enforced by different mechanisms at different layers. A **rate limit** governs burst and steady-state pace — "100 requests per minute" — and is what the token bucket and sliding window above implement; it protects the service from short-term overload. A **quota** governs total consumption over a business-meaningful period — "1M requests per month" on a pricing plan — and is a billing/product constraint, typically tracked as a simple counter against a longer window rather than needing burst-aware algorithms at all. A client can be well within its monthly quota and still get rate-limited for sending too much too fast, and conversely can stay under every rate limit all month and still hit its quota on day three. Enterprise APIs generally need both, enforced independently: rate limits keep any single client from overwhelming shared infrastructure right now, quotas enforce what a customer actually paid for over the billing period.
+
+## Rate limiting dimensions: what you're actually limiting by
+
+"Rate limit this client" undersells how many different axes a production API needs to key limits on, often simultaneously:
+
+- **IP address** — the crudest dimension; useful against unauthenticated abuse, useless once a client sits behind a shared NAT or corporate proxy.
+- **User** — per-authenticated-identity limits, appropriate once a request carries a verified user (Chapter 13).
+- **API key** — the standard dimension for third-party/machine callers (Chapter 13's API key section), since a key maps to an integration, not a person.
+- **Tenant** — in a multi-tenant system, limiting by organization/account so one noisy tenant's traffic can't degrade service for every other tenant sharing the same infrastructure.
+- **Endpoint** — a cheap `GET /orders/{id}` and an expensive `POST /reports/generate` shouldn't share the same budget; per-endpoint limits (or per-endpoint cost weighting) prevent a client from being "under quota" while hammering the one endpoint that actually hurts.
+- **Token / query complexity** — GraphQL's cost-based limiting below, and the gRPC message-rate limiting further down, are both this dimension: cost of the specific operation, not a flat per-call count.
+- **Downstream resource** — limiting by what a request actually consumes on the far side (a specific database, a specific third-party API with its own rate limit you must not exceed on a shared credential) rather than by who's asking at all.
+
+Most production systems compose several of these — API key *and* endpoint, or tenant *and* query cost — rather than picking one dimension globally; which combination matters depends on which resource is actually at risk of being exhausted.
+
 ## Rate limiting GraphQL by cost, not by request count
 
 Given the complexity analysis from Chapter 9, the natural evolution is to rate-limit by *cumulative query cost* rather than request count — a client's budget is consumed in proportion to the complexity score of each query, not a flat 1 token per call. This directly ties rate limiting and query cost analysis together: the same cost function protecting against a single catastrophic query also governs a client's overall throughput budget.

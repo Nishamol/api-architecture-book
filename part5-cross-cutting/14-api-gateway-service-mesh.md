@@ -28,6 +28,21 @@ flowchart TB
     class SideA,SideB neutral
 ```
 
+## Gateway, BFF, and API composition are not the same pattern
+
+These terms get used interchangeably in practice, and conflating them is how a team ends up asking one component to do a job it wasn't shaped for. They differ in *why* a request stops there, not just in what infrastructure runs it:
+
+| Pattern | Primary purpose |
+|---|---|
+| Reverse proxy | Network routing — get a request to the right backend, nothing more |
+| API Gateway | Edge/API policy — auth, rate limiting, protocol translation, applied uniformly across many routes |
+| BFF (Backend for Frontend) | Client-specific backend — composition and shaping tailored to one client team's screens |
+| API Composition | Aggregate multiple services into one response, independent of any specific client's UI |
+| GraphQL Gateway | Client-defined aggregation — the client, not the server team, decides the shape per request |
+| Service Mesh | Service-to-service infrastructure — east-west traffic, not client-facing at all |
+
+A plain reverse proxy makes no policy decisions at all — it's the layer everything below it builds on. An API gateway adds uniform, cross-cutting policy but stays agnostic to any particular client's needs. A BFF and generic API composition both aggregate multiple backend calls into one response, but a BFF is explicitly owned by and shaped for one client team (this chapter's GraphQL BFF example below), while API composition is a broader, client-agnostic aggregation layer that might serve several different callers the same composed shape. A GraphQL gateway takes composition a step further by handing shape selection to the client itself, per request, rather than baking it into the server. And a service mesh isn't client-facing at all — it's the east-west counterpart to everything else in this table being north-south. Reaching for a service mesh to solve a BFF-shaped problem (or vice versa) is exactly the mismatch the chapter's opening paragraph warns about.
+
 ## What a gateway centralizes
 
 - **Protocol translation**: exposing a REST or GraphQL interface externally while internal services communicate over gRPC — a very common pattern, since gRPC's binary format and HTTP/2 requirement make it a poor fit for direct browser or third-party consumption.

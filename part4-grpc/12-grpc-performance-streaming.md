@@ -17,9 +17,13 @@ flowchart LR
     class Perf neutral
 ```
 
+## Deadline propagation under load
+
+Chapter 10 introduces deadlines as gRPC's replacement for client-side timeouts; under streaming and high concurrency specifically, propagation is what keeps a slow downstream from turning into a resource leak rather than just a slow response. A unary call that misses its deadline stops one wasted unit of work. A *streaming* call that isn't deadline-aware can hold a connection, a DB cursor, and a slot in a thread or task pool open indefinitely for a client that has already given up — and because streaming calls are long-lived by design, this failure mode compounds under load in a way a fast unary timeout never does. The same `context.cancelled()` check that handles client disconnects (below) also fires when a deadline expires, so a correctly written streaming handler gets deadline enforcement for free once it's checking cancellation on every iteration — one more reason "check `context.cancelled()` every loop" is a hard requirement, not a nicety.
+
 ## Streaming backpressure
 
-In server streaming, the server can produce responses faster than the client consumes them. Without backpressure handling, this leads to unbounded buffering on the sending side. `grpc.aio`'s streaming write calls are awaitable and will naturally apply backpressure if you `await` each write and don't buffer ahead of it:
+In server streaming, the server can produce responses faster than the client consumes them — a telemetry producer emitting 10,000 events/sec into a consumer that can only process 1,000/sec is the concrete version of this problem. Without backpressure, that gap becomes unbounded buffering: the server keeps queuing events the client isn't ready for, memory grows without bound, and the failure shows up as an OOM kill far from wherever the actual mismatch originated. `grpc.aio`'s streaming write calls are awaitable and will naturally apply backpressure if you `await` each write and don't buffer ahead of it — the `await` on `context.write()` below doesn't return until the client has consumed what was already sent, which is what keeps the producer from outrunning the consumer in the first place:
 
 ```python
 async def StreamOrderUpdates(self, request, context):

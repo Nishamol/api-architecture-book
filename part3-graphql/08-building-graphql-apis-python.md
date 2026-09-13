@@ -69,6 +69,30 @@ schema = strawberry.Schema(query=Query, mutation=Mutation)
 
 This is the same maintainability argument as a REST request body model (Chapter 5): once a mutation needs more than one or two scalar arguments, bundling them into a named input type keeps the mutation's signature stable as fields are added, rather than growing an ever-longer flat parameter list.
 
+## Don't let the schema become the data model
+
+It's tempting, especially with Strawberry's dataclass-driven types, to make `Order` and `Customer` thin wrappers directly over ORM rows — the schema fields line up with column names, so why add a layer:
+
+```
+GraphQL schema
+      ↓
+database tables       ← don't do this
+```
+
+This works for a demo and breaks down the moment the schema needs to diverge from storage for any reason: a field that's computed from two tables, a resolver that needs to call another service, a business rule that shouldn't live in a GraphQL resolver at all. The resolvers above already hint at the right shape — `fetch_order`, `create_order_record` are functions, not direct table access — but it's worth making the layering explicit before the schema grows:
+
+```
+GraphQL schema
+      ↓
+application/domain model
+      ↓
+repositories/services
+      ↓
+data stores
+```
+
+Resolvers should call into the same service layer a REST handler would (Chapter 4's `Depends(get_db)` pattern and this layer are doing the same job) rather than embedding query logic directly in `@strawberry.field` methods. Skipping this layer doesn't just cost cleanliness — it's how teams end up with a GraphQL API that can't express a field without adding a database migration first, because the schema and the schema-that-happens-to-be-a-table have quietly become the same thing. A field like `Order.total` that's actually `sum(line_item.price * line_item.quantity)` belongs in the domain model or service layer, computed once and reused whether it's requested over GraphQL, REST, or gRPC — not recomputed ad hoc inside a resolver with no other caller.
+
 ## Mounting on FastAPI
 
 ```python

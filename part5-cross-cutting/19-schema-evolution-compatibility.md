@@ -109,23 +109,31 @@ Additive changes are close to free; anything that removes, renames, retypes, or 
 
 ```mermaid
 flowchart LR
-    PR["Schema change proposed<br/>(.proto / GraphQL SDL / OpenAPI)"]
-    CI{"CI compatibility check<br/>buf breaking · GraphQL Inspector · Apollo schema checks"}
-    Merge["Merged — deploy proceeds"]
+    PR["Schema change<br/>(.proto / GraphQL SDL / OpenAPI)"]
+    CI{"Compatibility analysis<br/>buf breaking · GraphQL Inspector · openapi-diff"}
+    Auto["Automated check<br/>in CI"]
+    Impact["Consumer impact<br/>(consumer inventory, Chapter 6 —<br/>who actually depends on what's changing)"]
+    Deploy["Deploy"]
+    Observe["Observe<br/>(telemetry on old vs. new usage)"]
+    Dep["Deprecate<br/>(Chapter 6's lifecycle, if breaking)"]
     Reject["Blocked — deprecation window<br/>or consumer sign-off required"]
 
-    PR --> CI
-    CI -->|safe / additive| Merge
-    CI -->|breaking change detected| Reject
+    PR --> CI --> Auto
+    Auto -->|safe / additive| Impact --> Deploy --> Observe --> Dep
+    Auto -->|breaking, no migration path| Reject
 
     classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
     classDef security fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
 
-    class Merge success
+    class Deploy,Observe success
     class Reject error
-    class CI security
+    class CI,Auto security
+    class Impact,Dep neutral
 ```
+
+A compatibility check passing in CI answers "is this technically safe" — it doesn't answer "who does this affect" or "did it actually work in production." Those are the same consumer-inventory and usage-telemetry disciplines Chapter 6 introduces for REST versioning, generalized: an automated check is a gate, not the whole governance process, and even a purely additive, technically-safe change still benefits from the observe step, since "safe" is a claim about the schema, not a guarantee about every consumer's actual behavior.
 
 ## Schema registries
 

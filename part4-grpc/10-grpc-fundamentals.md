@@ -65,6 +65,38 @@ message Order {
 
 **Enums** replace a loosely-typed string field with a fixed, compile-time-checked set of values — but proto3 requires every enum to define a zero value (`ORDER_STATUS_UNSPECIFIED` here), because a field that's never explicitly set decodes to that zero value rather than to `null`; a language with a real "absent" concept can mask this distinction, but it's still there on the wire. **`oneof`** groups fields that are mutually exclusive — only one of `credit_card_token` or `bank_account_token` is ever set on a given message, and setting one clears the other, which is the wire-level equivalent of a tagged union. **`map<K, V>`** encodes key-value data without hand-rolling a `repeated` message of key/value pairs. **Well-known types** like `google.protobuf.Timestamp` (and `Duration`) are the standard way to represent dates and durations — every generated language binding gets a native representation for them, instead of every service inventing its own string or epoch-integer convention that the next service has to guess at.
 
+## Protobuf compatibility rules
+
+Because every client and server generates its stubs from the `.proto` file independently, and because upgrades roll out gradually across a fleet, a schema change has to work when an old binary reads a message written by a new one and vice versa. Protobuf's wire format is designed around a small set of rules that make that possible — Chapter 19 covers the CI tooling that enforces them across an entire platform; here's what the rules actually are.
+
+**Safe changes:**
+- Add a new field, with a new, never-before-used field number.
+- Add a new value to an enum (with the same caveat as GraphQL enums in Chapter 7: a consumer doing an exhaustive switch over the old value set can still break in practice, even though the wire format itself tolerates it).
+- Add a new RPC method to a service.
+
+**Unsafe changes:**
+- **Reuse a field number** from a removed field — the single most dangerous mistake, because a peer still running the old `.proto` will decode the new field's bytes as the old field's type, silently corrupting data rather than failing loudly.
+- **Change a field's type** to something wire-incompatible (Protobuf defines which types share a wire format — e.g. `int32`/`uint32`/`bool` are compatible with each other, but `int32` and `string` are not; changing within a compatible group is safe, across groups is not).
+- **Change a field's semantic meaning** without changing its number or type — nothing on the wire stops you, and nothing detects it either; a field silently reinterpreted from "quantity in units" to "quantity in cases" is a correctness bug no compatibility checker can catch, which is why field semantics need the same change discipline as their types.
+
+**Reserved fields** close the field-number-reuse hole at the source: once a field is removed, mark its number (and, ideally, its name) `reserved` so the compiler itself rejects any future attempt to reuse it, rather than relying on every future author remembering the retired field manually.
+
+```protobuf
+message Order {
+  reserved 4, 7;
+  reserved "legacy_discount_code";
+
+  string id = 1;
+  OrderStatus status = 2;
+  repeated LineItem line_items = 3;
+  // field 4 used to be `discount_code` — retired, never reuse
+}
+```
+
+**Unknown fields.** A consumer running an older `.proto` that receives a message with fields it doesn't recognize doesn't error — it preserves the unknown bytes and ignores them (and, critically, round-trips them unchanged if it forwards the message on, which matters for proxies and gateways that pass messages through without fully deserializing them). This is what makes "add a field" safe in the first direction: old code tolerates data it doesn't understand yet.
+
+**Backward vs. forward compatibility** are two different guarantees and it's worth keeping them straight: *backward compatible* means new code can read old data (an old message, decoded by a new `.proto` — missing fields just take their default); *forward compatible* means old code can read new data (a new message, decoded by an old `.proto` — extra fields become unknown fields and are ignored). A rolling deploy needs both simultaneously, since for the duration of the rollout old and new binaries are both live and both talking to each other in either direction.
+
 ## Code generation
 
 ```bash

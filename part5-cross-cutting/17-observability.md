@@ -114,6 +114,21 @@ Percentile metrics tell you what's happening; an **SLI** (Service Level Indicato
 
 This reframes reliability work from an open-ended "make it more reliable" mandate into a concrete, spendable resource: a risky deploy or a planned migration burns budget deliberately, and once the budget for the period is exhausted, the team's default shifts toward stability work over new features until it recovers. The practical alerting consequence is that pages should key off *error budget burn rate*, not the SLI in isolation — a slow steady leak over weeks and a sharp spike over minutes both eventually exhaust the same budget, but only the second one should wake anyone up at 3am; alerting on the raw SLI alone can't distinguish the two.
 
+A real API SLO is rarely a single number — it's a small set of them covering different failure shapes, since a service can satisfy one while badly violating another:
+
+```
+Availability:  99.95%, trailing 30 days
+p95 latency:   < 300ms
+p99 latency:   < 1s
+5xx rate:      < 0.1%
+```
+
+Availability alone can look healthy while p99 quietly regresses for a slow subset of requests; a low 5xx rate can coexist with a latency SLO breach if the service is degrading rather than erroring outright. Track all four (or whichever combination matches the service's actual failure modes) rather than picking the one that's easiest to report on.
+
+## Trace propagation across the full stack
+
+The four-hop trace above (REST gateway → GraphQL BFF → two gRPC services) stops at the service boundary, but the request's actual latency doesn't — a query that's slow "in the database" is invisible in a trace that only instruments the API layers. Most database client libraries and drivers have OpenTelemetry instrumentation (`opentelemetry-instrumentation-asyncpg`, `-psycopg2`, and equivalents for other drivers) that emits a span per query, attributed to whichever service span called it — so the same trace that shows REST → GraphQL → gRPC → gRPC can extend one hop further to show *which specific query*, on which service, accounted for the time. Without DB-level spans, "gRPC Service B took 400ms" is where the trace stops being useful right at the point an incident investigation needs it most — closing that last hop is what makes a trace a complete picture of "where did the time go" rather than a picture that ends at the last layer someone bothered to instrument.
+
 ## Failure modes
 
 - **No shared correlation ID across protocol boundaries**: a request that touches REST, GraphQL, and gRPC layers leaving three separate, unlinked trails of logs that have to be manually stitched together during an incident.

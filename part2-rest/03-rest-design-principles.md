@@ -13,6 +13,22 @@ POST   /orders/42/cancel   → an action that doesn't map to CRUD (acceptable es
 
 That last line matters: not everything is CRUD. Trying to force a "cancel this order" operation into a `PATCH` with a status field buries intent in payload data instead of the URL. A well-designed REST API allows action-oriented sub-resources for genuine business operations rather than contorting itself to stay "pure."
 
+## HTTP semantics as design constraints
+
+Chapter 2 covers method semantics at the transport level; here they're constraints your resource design has to honor at every endpoint, not background trivia.
+
+| Method | Safe (no side effects) | Idempotent | Cacheable | Typical REST use |
+|---|---|---|---|---|
+| GET | Yes | Yes | Yes | Fetch a resource or collection |
+| PUT | No | Yes | No | Replace a resource entirely, using the full representation the client sends |
+| PATCH | No | Not guaranteed | No | Apply a partial update — a diff, not a full representation |
+| POST | No | No | No (unless explicitly marked cacheable) | Create a resource, or a non-CRUD action (`POST /orders/42/cancel`) |
+| DELETE | No | Yes | No | Remove a resource |
+
+**PUT vs PATCH** is a design decision, not a formatting choice. PUT means "here is the complete resource, replace whatever's there" — a client that fetches an order, changes one field, and PUTs back a payload built from a stale local copy silently wipes every field it didn't include, because PUT treats the request body as the entire representation. PATCH means "apply this partial change"; fields the client omits are left alone. That makes PATCH the right choice for most real-world partial updates, but its non-idempotency is real — "increment quantity by 1" applied twice by a naive retry is not the same as applying it once — so a well-designed PATCH endpoint accepts an idempotent description of the change (an absolute new value, or a versioned instruction) rather than a relative delta, if it needs to be safely retryable.
+
+**Conditional requests** — `ETag`, `If-None-Match`, `If-Match`, `Cache-Control` — are how "safe to cache" and "safe to overwrite" both get enforced by the protocol instead of by convention. Chapter 2 covers `ETag` / `If-None-Match` / `Cache-Control` for caching a `GET`. The rest of this chapter reuses the same `ETag` on the write side, via `If-Match`, for optimistic concurrency.
+
 ## The Richardson Maturity Model
 
 Leonard Richardson's model gives a useful yardstick for how "RESTful" an API actually is:
@@ -88,9 +104,26 @@ Status codes are not decoration — they're machine-readable signal. `422` (vali
 | 422 | Validation failure | Well-formed JSON that fails schema validation |
 | 409 | Conflict | Optimistic concurrency failure |
 
-## Optimistic concurrency with ETags
+## One ETag, two jobs: caching and concurrency
 
-The `409` above needs a mechanism behind it. Without one, two clients that both `GET /orders/42`, both edit their copy, and both `PUT` it back produce a lost update: the second write silently overwrites the first, and neither client ever finds out. HTTP's built-in answer is the conditional write. The server returns an `ETag` (a version fingerprint) on reads; the client echoes it back on the next write as `If-Match`, and the server rejects the write with `412 Precondition Failed` (or `409`) if the resource has changed since.
+The same response header does double duty in REST design, and it's worth being explicit about both uses on the same resource rather than treating them as unrelated mechanisms.
+
+**Reading `/orders/42`** — the `ETag` lets a client or shared cache skip re-fetching a body that hasn't changed:
+
+```
+GET /orders/42
+                         →  200 OK
+                             ETag: "v7"
+                             Cache-Control: private, max-age=30
+                             Vary: Accept, Authorization
+
+GET /orders/42
+If-None-Match: "v7"     →  304 Not Modified   (no body — the client's cached copy is still valid)
+```
+
+`Cache-Control: private` matters here specifically because order data is per-customer — `public` would let a shared proxy serve one customer's order to another. `Vary: Accept, Authorization` tells any cache that a response can differ by content negotiation and by *who's asking*, so it must key the cache entry on those headers too, not just the URL — omitting `Vary: Authorization` on a per-user resource is how one user's cached response ends up served to a different user with a different token.
+
+**Writing to `/orders/42`** — the same `ETag` prevents a lost update. Without a mechanism here, two clients that both `GET /orders/42`, both edit their copy, and both `PUT` it back produce a lost update: the second write silently overwrites the first, and neither client ever finds out. The client echoes the `ETag` it read back on the next write as `If-Match`, and the server rejects the write with `412 Precondition Failed` (or `409`) if the resource has changed since:
 
 ```
 GET /orders/42          →  200 OK, ETag: "v7"

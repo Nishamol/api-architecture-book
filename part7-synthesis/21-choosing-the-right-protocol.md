@@ -20,6 +20,27 @@ Once the interaction is genuinely synchronous request/response, these are the ax
 
 **What's your caching story?** REST's URL-keyed caching is close to free at every layer (browser, CDN, reverse proxy). GraphQL needs deliberate normalized client-side caching or persisted-query-keyed server caching (Chapter 9) — nothing comes for free. gRPC is rarely cached in the HTTP sense at all; its performance model comes from avoiding round trips and payload size, not from caching responses.
 
+## The full axis set, organized
+
+The four questions above are really instances of five broader categories worth naming explicitly, because a real decision draws on all five and skipping one is usually how a "reasonable" choice turns out wrong in production:
+
+**Communication model** — synchronous, asynchronous, or streaming (the question this chapter opens with, and Chapter 20's territory once the answer isn't synchronous).
+
+**Interaction model** — what shape is the interaction, independent of protocol:
+- *Resource* — fetch/replace/delete a thing (REST's native shape).
+- *Query* — client-defined shape over a graph of data (GraphQL's native shape).
+- *Command / RPC* — invoke a specific operation with a strict contract (gRPC's native shape).
+- *Event* — something happened, zero or more systems react (Chapter 20).
+- *Notification* — a one-way, best-effort signal, weaker than an event with a durable contract (a webhook that doesn't need replay or ordering guarantees).
+
+**Contract model** — how the shape is specified and checked: OpenAPI (REST), GraphQL SDL, Protobuf (gRPC), or AsyncAPI/an event schema (Chapter 20). This determines what Chapter 19's compatibility tooling can actually check for you versus what stays a convention.
+
+**Operational characteristics** — latency budget, throughput, cacheability, ordering guarantees (none, per-key, or global — Chapter 20), retry semantics (is the operation idempotent — Chapter 3, Chapter 16), delivery guarantees (at-most-once, at-least-once, effectively-once — Chapter 20), and backpressure behavior under a slow consumer (Chapter 12).
+
+**Organizational factors** — who owns the producer, who owns the consumer, can they deploy together or does a change need to survive independent release cycles, and how many consumers exist that you don't know about and can't coordinate with. This is the axis underneath "who is the client" below, and it's usually the axis that actually decides things: two teams that can deploy in lockstep can accept a tightly coupled contract that would be reckless against an unknown third party.
+
+None of these five replace the other; they compose. An internal service-to-service call is synchronous + command/RPC + Protobuf + low-latency/ordered-per-key + both-ends-owned-by-you — which is exactly why it lands on gRPC. A public integration notifying sellers of a shipment is asynchronous + event + AsyncAPI-described + at-least-once/unordered + unknown-consumer-count — which is why it's a webhook, not a REST response field. Running the five-axis analysis explicitly is what turns "gut feel says gRPC" into a decision you can defend and revisit later.
+
 ## A quick-reference table
 
 | Concern | REST | GraphQL | gRPC |

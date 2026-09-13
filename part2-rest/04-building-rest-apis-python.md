@@ -2,15 +2,17 @@
 
 ## Framework choice as an architectural decision
 
-**FastAPI** is built on Starlette (ASGI) and Pydantic. It's async-native, generates OpenAPI schemas automatically from type hints, and has become the default choice for greenfield Python REST APIs since roughly 2020. **Django REST Framework (DRF)** is built on Django's synchronous WSGI core (with growing but still partial async support) and earns its keep when you need Django's ORM, admin panel, and migrations ecosystem — most commonly when the API sits inside a larger Django monolith rather than as a standalone service. **Flask** with Flask-RESTful or Flask-Smorest remains common in legacy codebases but is rarely the right choice for a new service in 2026 given FastAPI's async performance and built-in validation.
+The framework you pick isn't a style preference — it fixes your concurrency model, how validation and dependency injection work, what middleware is available, and how the service gets deployed and operated. Those effects outlast whichever framework happens to be fashionable this year.
 
-This chapter uses FastAPI for code examples, since it's the more common choice for new gRPC-adjacent, async-first microservices — but the design principles apply regardless of framework.
+**FastAPI** is built on Starlette (ASGI) and Pydantic. It's async-native, generates OpenAPI schemas automatically from type hints, and is a popular choice for greenfield Python APIs, particularly where async I/O and type-driven validation matter. **Django REST Framework (DRF)** is built on Django's WSGI core — its async support has been growing and continues to evolve — and earns its keep when you need Django's ORM, admin panel, and migrations ecosystem — most commonly when the API sits inside a larger Django monolith rather than as a standalone service. **Flask** with Flask-RESTful or Flask-Smorest remains common in legacy codebases and is still a reasonable choice for small, mostly synchronous services, though it leaves async performance and request validation for you to add yourself.
+
+This chapter uses FastAPI for code examples, since its async-first design maps cleanly onto gRPC-adjacent microservices — but the design principles apply regardless of framework.
 
 | Concern | FastAPI | Django REST Framework | Flask (+ Flask-RESTful/Smorest) |
 |---|---|---|---|
-| Foundation | Starlette (ASGI) + Pydantic | Django's WSGI core (growing but still partial async support) | Flask |
+| Foundation | Starlette (ASGI) + Pydantic | Django's WSGI core (async support growing) | Flask |
 | Concurrency model | Async-native | Primarily synchronous | Synchronous |
-| Best fit | Greenfield Python REST APIs (default choice since ~2020) | API inside a larger Django monolith — needs the ORM, admin panel, migrations ecosystem | Legacy codebases |
+| Best fit | Async I/O and type-driven validation matter | API inside a larger Django monolith — needs the ORM, admin panel, migrations ecosystem | Small or legacy synchronous services |
 
 ## Request lifecycle in FastAPI
 

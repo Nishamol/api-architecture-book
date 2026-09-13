@@ -4,6 +4,49 @@
 
 A REST API's contract will change. The question is never "will we version" but "how do we let the contract evolve without breaking clients we may not even know exist" — third-party integrators, mobile apps stuck on old versions because users haven't updated, internal services owned by other teams on their own release cadence.
 
+## Versioning is one stage of an API's lifecycle
+
+It's easy to read a chapter titled "Versioning" and come away thinking version numbers are the whole problem. They're one mechanism inside a longer lifecycle every production API actually goes through, and treating versioning in isolation is how teams end up with a clean `/v2` and no plan for what happens to `/v1`'s remaining callers.
+
+```
+Design → Publish → Adopt → Evolve → Deprecate → Migrate → Sunset
+```
+
+- **Design** — the contract you're committing to publicly; Chapters 3 and 5 are what you bring to this stage.
+- **Publish** — the API becomes something external code depends on; from this point, every change is a compatibility decision, not just a code change.
+- **Adopt** — consumers integrate. You often don't know who all of them are yet, which is exactly why the next stages need instrumentation, not assumptions.
+- **Evolve** — additive, backward-compatible changes ship continuously (see the change-category table below) without needing a new version.
+- **Deprecate** — a breaking change is unavoidable; the old shape is marked for removal but still fully functional.
+- **Migrate** — consumers move to the new shape, on a timeline the API owner actively drives rather than waits on.
+- **Sunset** — the old shape stops working, on a date that was communicated well in advance.
+
+The rest of this chapter is organized around the mechanics of **Evolve** and **Deprecate → Migrate → Sunset**, since that's where most of the engineering and organizational work actually lives. Making it succeed requires four things beyond the HTTP headers:
+
+- **Consumer inventory** — know who's calling the old version (by API key, OAuth client ID, or user agent) before you can plan around them. You cannot deprecate what you cannot see.
+- **Usage analytics** — not just "is anyone calling `/v1`" but which fields and endpoints within it, so migration guidance can be specific ("you only use these three fields — here's the equivalent in `/v2`") instead of "read the whole new spec."
+- **Migration guides** — a concrete mapping from old shape to new shape, not just a changelog entry; the `Link` header pattern below is how a client discovers it programmatically.
+- **Communication strategy and old-client support windows** — outreach to top callers by volume, a published support window long enough for the slowest realistic consumer (an infrequently-updated mobile app, a third-party integrator's own release cycle) to migrate, and a hard date that's actually enforced once it arrives — see "Deprecation without enforcement" below.
+
+```mermaid
+flowchart LR
+    D["Design"] --> P["Publish"]
+    P --> A["Adopt"]
+    A --> E["Evolve<br/>(additive changes,<br/>no version bump)"]
+    E --> Dep["Deprecate<br/>(old shape marked,<br/>still functional)"]
+    Dep --> M["Migrate<br/>(consumer inventory +<br/>usage analytics + guides)"]
+    M --> S["Sunset<br/>(old shape removed)"]
+
+    classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+
+    class D,P,A neutral
+    class E success
+    class Dep,M warn
+    class S error
+```
+
 ## Three versioning strategies
 
 **URI versioning** (`/v1/orders`, `/v2/orders`) is the most common because it's the most visible and cacheable — CDNs and browsers key on the URL, so this is compatible with HTTP caching with zero extra configuration. Its downside is that it implies the entire API version lockstep, when in practice most changes only affect one resource.

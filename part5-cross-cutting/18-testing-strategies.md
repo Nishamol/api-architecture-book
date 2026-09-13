@@ -91,9 +91,27 @@ async def test_get_order_not_found_raises_grpc_status():
 
 For genuine integration tests exercising the real gRPC wire protocol (worth having, since serialization bugs and interceptor ordering issues won't show up in a pure in-process test), spin up a real `grpc.aio.server()` bound to an ephemeral port within the test process and connect a real client stub to it.
 
-## Contract testing across protocol boundaries
+## Contract testing: the fourth layer the pyramid leaves out
 
-For a system where a REST gateway calls a gRPC backend which is queried through a GraphQL BFF (Chapter 22's case study architecture), the most valuable and most commonly neglected test category is the one verifying the translation *between* layers is correct — that the gateway's REST response shape actually matches what the gRPC backend returned, not just that each layer works in isolation. Pact-style consumer-driven contracts (Chapter 6) generalize across protocols for exactly this purpose.
+Unit, integration, and end-to-end tests all verify a service against *itself* — its own logic, its own dependencies, its own running instance. None of them verify that a service still satisfies what its actual consumers depend on, which is a different question and needs a different test category, not just more of the other three. **Contract testing** closes that gap with a specific shape:
+
+```
+Consumer
+   ↓  (records what it actually calls, and what it expects back)
+Consumer contract
+   ↓  (published, e.g. to a Pact Broker or a schema registry)
+Provider verification
+   (provider's CI replays every published contract against the real service,
+    before deploying — fails the build if any consumer's expectations break)
+```
+
+The mechanism differs per protocol, but the shape is identical:
+
+- **REST/OpenAPI** — a consumer's Pact test records the specific requests it makes and the response shape it depends on; the provider's CI replays every published consumer contract against a real running instance of the API and fails if any expectation isn't met (Chapter 6 introduces this from the versioning side; this is the same mechanism, run as a first-class test suite rather than a versioning afterthought).
+- **GraphQL schema** — the "consumer contract" is implicit in the operations a client actually sends; tools that check a schema change against real production query logs (Chapter 19's schema diffing) are contract testing for GraphQL, verifying the provider still satisfies every query shape consumers are actually sending, not just that the schema is structurally valid.
+- **gRPC/Protobuf** — the `.proto` file is itself the contract, so provider verification here is `buf breaking` (Chapter 19) checking a new schema against the previous one; the "consumer" side is every service holding a compiled stub against a given contract version, which is why field-tag compatibility (Chapter 10) is what makes this checkable at all without needing a Pact-style broker.
+
+The most valuable and most commonly neglected place to apply this is at translation boundaries — a REST gateway calling a gRPC backend queried through a GraphQL BFF (Chapter 22's case study architecture) can have every individual layer pass its own unit and integration tests while the *translation between them* silently drifts, because nothing actually tests that the gateway's REST response shape still matches what the gRPC backend returns.
 
 ```mermaid
 flowchart LR
