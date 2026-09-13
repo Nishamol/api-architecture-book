@@ -10,7 +10,7 @@ Junior teams pick an API style because it's what the framework tutorial used. Se
 
 **GraphQL** is a query-oriented style built on a single endpoint and a strongly typed schema. The client specifies the exact shape of the data it wants, and the server resolves it field by field. This solves REST's over-fetching problem at the cost of moving complexity into the resolver graph — a single query can now trigger dozens of downstream calls, and the server has to defend itself against expensive queries at request time rather than at design time.
 
-**gRPC** is a contract-first RPC framework built on HTTP/2 and Protocol Buffers. The client calls what looks like a local function; the wire format is a compact binary encoding, and the contract is a `.proto` file that generates client and server stubs in whatever language you need. gRPC trades human-readability and browser-nativeness for performance, strong typing, and native support for streaming — this is why it dominates service-to-service communication inside a datacenter but rarely faces an external mobile client directly.
+**gRPC** is a contract-first RPC framework built on HTTP/2 and Protocol Buffers. The client calls what looks like a local function; the wire format is a compact binary encoding, and the contract is a `.proto` file that generates client and server stubs in whatever language you need. gRPC trades human-readability and browser-nativeness for performance, strong typing, and native support for streaming — this makes it a strong choice for many service-to-service environments, though plenty of internal traffic also runs over REST/HTTP, message queues, or event streams like Kafka; gRPC rarely faces an external mobile client directly.
 
 | Aspect | REST | GraphQL | gRPC |
 |---|---|---|---|
