@@ -8,13 +8,13 @@ Junior teams pick an API style because it's what the framework tutorial used. Se
 
 **REST** is a resource-oriented style built on HTTP semantics. A REST API exposes nouns (`/orders/42`) and lets HTTP verbs (`GET`, `POST`, `PATCH`, `DELETE`) express intent. Its contract is loose *at the protocol level* — HTTP itself enforces media types and status codes but not payload shape. Teams routinely impose a strong contract on top with OpenAPI, JSON Schema, and consumer-driven contract tests; the point is that this is a discipline the organization adds, not something the protocol checks for you the way a GraphQL schema or a `.proto` file does. That looseness is REST's biggest strength — any HTTP client can talk to it, and REST can take advantage of standardized HTTP caching semantics at browsers, CDNs, and proxies (Chapter 2) by setting the right headers, not automatically — and, left undisciplined, its biggest weakness (over-fetching, under-fetching, and undocumented payload drift).
 
-**GraphQL** is a query-oriented style built on a single endpoint and a strongly typed schema. The client specifies the exact shape of the data it wants, and the server resolves it field by field. This solves REST's over-fetching problem at the cost of moving complexity into the resolver graph — a single query can now trigger dozens of downstream calls, and the server has to defend itself against expensive queries at request time rather than at design time.
+**GraphQL** is a query-oriented style built on a single endpoint and a strongly typed schema. The client specifies the exact fields it wants from the schema, and the server resolves each one field by field — regardless of whether a given field comes from a database column, a downstream service call, or a value computed on the fly. This solves REST's over-fetching problem at the cost of moving complexity into the resolver graph — a single query can now trigger dozens of downstream calls, and the server has to defend itself against expensive queries at request time rather than at design time.
 
 **gRPC** is a contract-first RPC framework built on HTTP/2 and Protocol Buffers. The client calls what looks like a local function; the wire format is a compact binary encoding, and the contract is a `.proto` file that generates client and server stubs in whatever language you need. gRPC trades human-readability and browser-nativeness for performance, strong typing, and native support for streaming — this makes it particularly well suited to service-to-service communication where both ends are controlled and strong contracts, efficient serialization, or streaming actually matter, though plenty of internal traffic also runs over REST/HTTP, message queues, or event streams like Kafka, and a service mesh doesn't imply gRPC any more than it implies any other protocol; gRPC rarely faces an external mobile client directly.
 
 | Aspect | REST | GraphQL | gRPC |
 |---|---|---|---|
-| Contract | Loose at the protocol level — HTTP verbs and media types; strong payload contracts (OpenAPI/JSON Schema) are a convention layered on top | Strongly typed schema; client specifies the exact shape it wants | Contract-first `.proto` file; generates typed client/server stubs |
+| Contract | Loose at the protocol level — HTTP verbs and media types; strong payload contracts (OpenAPI/JSON Schema) are a convention layered on top | Strongly typed schema; client specifies the exact fields it wants | Contract-first `.proto` file; generates typed client/server stubs |
 | Biggest strength | Any HTTP client can talk to it; standardized HTTP caching semantics are available when headers are set correctly | Solves over-fetching and under-fetching | Compact binary wire format, strong typing, native streaming |
 | Biggest weakness | Over-fetching, under-fetching, undocumented payload drift | Complexity moves into the resolver graph; server must defend against expensive queries | Not browser-native; trades human-readability for performance |
 
@@ -44,7 +44,7 @@ Authorization: Bearer <token>
 }
 ```
 
-The server decides the shape. If the client only needed `status`, it still paid for `shipping_address` and `billing_address` — classic over-fetching.
+If this representation is the contract for `GET /orders/{id}`, a client that only needed `status` still receives `shipping_address` and `billing_address` — classic over-fetching, not a flaw REST requires, but a cost of a single representation serving every caller of that endpoint.
 
 **GraphQL**
 
@@ -84,11 +84,11 @@ response = await stub.GetOrder(GetOrderRequest(order_id="42"), timeout=2.0)
 print(response.status, response.line_items)
 ```
 
-No JSON parsing, no URL construction — the client calls a typed method and gets a typed object back. The contract (`Order`, `GetOrderRequest`) is generated from the `.proto` file, so a field typo is a build error, not a runtime surprise.
+No JSON parsing, no URL construction — the client calls a typed method and gets a typed object back. The contract (`Order`, `GetOrderRequest`) is generated from the `.proto` file, giving clients and servers strongly typed APIs and far stronger tooling than an untyped JSON payload — IDE autocomplete, static analysis, and generated types across every language on both ends of the wire. In a statically typed language, a field typo like `response.line_itmes` is a compile error; in Python specifically, the generated types improve tooling and catch plenty of mistakes via IDE support and runtime validation, but a typo'd attribute access is still an `AttributeError` at runtime, not a build failure — the contract is real, but Python doesn't compile.
 
 ## First, a prior question: which communication model?
 
-REST, GraphQL, and gRPC are all **synchronous request/response**: a client sends a request, waits, and gets a response on the same connection. That's the right model for most API interactions, and it's what Parts II through IV cover in depth. But it isn't the only model, and choosing it by default is itself an architecture decision worth making consciously.
+The primary interaction model for REST, GraphQL queries/mutations, and unary gRPC calls is **synchronous request/response**: a client sends a request, waits, and gets a response on the same connection. That's the right model for most API interactions, and it's what Parts II through IV cover in depth. But it isn't the only model even within these three protocols — GraphQL has subscriptions, gRPC has server/client/bidirectional streaming, and REST can ride on SSE or long polling — and choosing synchronous request/response by default is itself an architecture decision worth making consciously.
 
 - **Synchronous request/response** — the caller needs the answer now and will wait for it (fetch an order, validate a form, run a search). REST / GraphQL / gRPC.
 - **Asynchronous** — the work takes longer than a caller should hold a connection for, or no single caller is waiting for "the answer" at all (a bulk import, a payment settlement, an event other systems react to). Webhooks, message queues, or an event stream — covered in Chapter 20.
@@ -174,7 +174,8 @@ Most real systems don't pick one. A production platform commonly runs gRPC inter
 flowchart LR
     Mobile["Mobile / web apps<br/>(first-party clients)"] --> GW["GraphQL gateway"]
     ThirdParty["Third-party integrators"] -->|"calls in"| REST["REST API"]
-    Broker["Event broker"] -->|"calls out"| WebhookEndpoint["Third-party's<br/>webhook endpoint"]
+    Broker["Event broker"] --> Delivery["Webhook delivery service<br/>(signing, retries, DLQ — Chapter 20)"]
+    Delivery -->|"calls out"| WebhookEndpoint["Third-party's<br/>webhook endpoint"]
 
     GW --> SvcA["Internal service A"]
     REST --> SvcA
@@ -189,8 +190,10 @@ flowchart LR
     class Mobile,ThirdParty client
     class GW,REST neutral
     class SvcA,SvcB success
-    class Broker,WebhookEndpoint warn
+    class Broker,Delivery,WebhookEndpoint warn
 ```
+
+That delivery service is doing real, non-trivial work between the broker and the third party — signing each payload, retrying failed deliveries with backoff, tracking per-delivery state, rate-limiting itself against a slow endpoint, and dead-lettering an endpoint that never succeeds — not just relaying events. Chapter 20 covers all of it; Chapter 22's case study names this component the seller-notification service.
 
 ## What "senior-level" means for this book
 

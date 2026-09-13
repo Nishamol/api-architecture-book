@@ -107,7 +107,7 @@ python -m grpc_tools.protoc \
   protos/orders.proto
 ```
 
-This generates `orders_pb2.py` (message classes) and `orders_pb2_grpc.py` (client stub and server servicer base class). Every language on both ends of the wire generates from the same `.proto` file, which is what gives gRPC compile-time contract safety that REST's loosely-typed JSON and even GraphQL's runtime schema validation don't fully match — a field type mismatch is a build error, not a runtime surprise.
+This generates `orders_pb2.py` (message classes) and `orders_pb2_grpc.py` (client stub and server servicer base class). Every language on both ends of the wire generates from the same `.proto` file, which is what gives gRPC stronger contract tooling than REST's loosely-typed JSON or even GraphQL's runtime schema validation. In a statically typed language consuming the same generated code, a field type mismatch is a compile error; in Python specifically, the generated types improve IDE autocomplete and static-analysis coverage and catch plenty of mistakes before runtime, but a mismatch that slips past those checks still surfaces as a runtime exception — Python has no build step to catch it at.
 
 ## The four RPC types
 
