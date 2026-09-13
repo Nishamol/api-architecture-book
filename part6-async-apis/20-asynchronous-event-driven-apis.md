@@ -17,7 +17,7 @@ An operation that takes 30 seconds has six defensible shapes. Choosing among the
 | `202 Accepted` + webhook | `POST` returns a job id; you `POST` the result to the client's URL when done | Client is a server that can receive HTTP, result may take minutes-to-hours, you're willing to operate delivery |
 | Publish an event | Caller gets a fast ack; interested systems react independently | Multiple consumers, or you don't know all consumers, and no single caller is waiting for "the answer" |
 | Expose a job API | First-class `Job` resource with status, progress, result, cancel | The long operation is itself a domain concept users manage (exports, migrations, batch runs) |
-| Message queue (point-to-point) | Caller enqueues work, a worker pool drains it | Work must not be lost, throughput is spiky, exactly one handler should process each item |
+| Message queue (point-to-point) | Caller enqueues work, a worker pool drains it | Work must not be lost, throughput is spiky, one logical consumer should normally own processing of each item at a time |
 
 ```mermaid
 flowchart TB
@@ -72,6 +72,24 @@ async def get_job(job_id: str):
 
 The design rules that matter: return `202` (not `200` — the work isn't done), put the job URL in `Location`, make `GET /jobs/{id}` cheap and pollable with a sane `Retry-After`, and keep the job record around after completion long enough for a client that was offline to come back and read the outcome. The job resource should carry a terminal `status` the client can branch on (`succeeded` / `failed` / `cancelled`) and, on failure, a machine-readable error in the same envelope as the rest of your API (Chapter 16).
 
+`BackgroundTasks` above is suitable for lightweight, process-local post-response work — it runs in the same process, after the response is sent, and disappears with that process. It is not a durable job execution mechanism: if the process crashes, gets redeployed, is killed by an autoscaler, or is simply restarted between accepting the job and finishing it, the task is gone with no record that it ever stopped, and the job resource is left showing `pending` forever with nothing left actually working on it. The job *state* living in Redis/DB, as the comment above notes, only solves half the problem — the work *execution* needs the same durability guarantee the state has, which `BackgroundTasks` doesn't provide. Production long-running work belongs on a durable queue with a separate worker pool, so the unit of work survives the web process's lifecycle entirely:
+
+```
+POST /exports
+      ↓
+Create job record (status: pending)
+      ↓
+Enqueue message (durable queue)
+      ↓
+202 + Location: /jobs/{id}
+      ↓
+Worker (separate process, drains the queue)
+      ↓
+Update job record (status: succeeded/failed)
+```
+
+The web process's only job becomes "create the record, enqueue the message, respond" — all fast, synchronous, and safe to retry — while a worker that can itself restart, redeploy, or scale independently owns actually doing the work and is the only thing that can mark a job complete.
+
 ## Webhooks are APIs too — with the direction reversed
 
 A webhook is your server making an HTTP request to a URL the consumer registered. Everything you learned about being a good API *server* now applies to you as an API *client*, and everything about being a good client applies to the consumer receiving the call. Webhooks are frequently treated as a afterthought bolted onto a REST API; they deserve the same design rigor, because they fail in ways a synchronous endpoint never does.
@@ -91,26 +109,43 @@ The receiver recomputes the HMAC and rejects the request if it doesn't match, or
 
 **Retries and delivery state.** The receiver's endpoint will be down sometimes. Retry on any non-2xx (or timeout) with exponential backoff and jitter (Chapter 16), for a bounded window — commonly something like 6–12 attempts over 24 hours. Track per-delivery state (`pending` / `succeeded` / `failed`) and expose it: a `GET /webhook-deliveries` endpoint and a manual "resend" control save an enormous amount of support load. After the retry budget is exhausted, move the delivery to a dead-letter store and — if an endpoint fails every delivery for long enough — disable the subscription and alert its owner rather than retrying forever.
 
-**Ordering and duplicates are the consumer's problem, and you must say so.** At-least-once delivery means the consumer *will* occasionally get the same event twice (a retry raced a slow-but-successful first attempt), and events can arrive out of order (delivery N+1 succeeds on the first try while N is still being retried). Put a unique `event_id` and a monotonic `occurred_at` (or a per-aggregate sequence number) in every event so a consumer can dedupe and reorder. Document this explicitly — a consumer who assumes exactly-once, in-order delivery has built a bug.
+**Ordering and duplicates are the consumer's problem, and you must say so.** At-least-once delivery means the consumer *will* occasionally get the same event twice (a retry raced a slow-but-successful first attempt), and events can arrive out of order (delivery N+1 succeeds on the first try while N is still being retried). Three fields do three different jobs here, and it's worth not collapsing them into one another: a unique **`event_id`** is what a consumer dedupes on; a per-aggregate **sequence number** (monotonically increasing per order, per user, whatever the aggregate is) is what a consumer reorders on; and **`occurred_at`** is a timestamp for observability and approximate temporal context, not a safe ordering key — clock skew between producer nodes, clock resolution, and genuinely concurrent events all mean two events can carry `occurred_at` values that don't reflect the order they need to be applied in. Put all three in every event, but only trust the sequence number for ordering decisions. Document this explicitly — a consumer who assumes exactly-once, in-order delivery, or who reorders on a wall-clock timestamp, has built a bug.
 
 ```python
-# Receiver side: verify, dedupe, ack fast, process later
-processed_event_ids: set[str] = set()  # back with Redis/DB, TTL'd
-
+# Receiver side: verify, dedupe, ack fast, process later.
+# The check-then-act shown as a comment below is deliberately wrong —
+# it's here to name the bug, not to model the fix.
 @app.post("/webhooks/orders")
 async def receive(request: Request):
     body = await request.body()
     if not signature_valid(body, request.headers):
         raise HTTPException(401)
     event = json.loads(body)
-    if event["event_id"] in processed_event_ids:
+
+    # WRONG: check-then-act against an in-memory set is a race condition.
+    # Two concurrent deliveries of the same event_id (a retry racing the
+    # original attempt) can both miss the check, both enqueue, and both add
+    # the key — the exact "claim atomically, don't check-then-act" mistake
+    # Chapter 3 calls out for idempotency keys, applied here to webhooks.
+    #
+    # if event["event_id"] in processed_event_ids: return ...
+    # enqueue_for_processing(event)
+    # processed_event_ids.add(event["event_id"])
+
+    # RIGHT: claim the event_id atomically — a UNIQUE constraint with
+    # INSERT ... ON CONFLICT DO NOTHING, in the same transaction as
+    # recording the work to be done (the inbox pattern, below).
+    claimed = await db.execute(
+        "INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        event["event_id"],
+    )
+    if claimed.rowcount == 0:
         return {"status": "duplicate ignored"}   # already handled — 200, not an error
     enqueue_for_processing(event)                 # do the real work off the request path
-    processed_event_ids.add(event["event_id"])
     return {"status": "accepted"}                 # ack within a couple seconds
 ```
 
-The receiver should do almost nothing synchronously: verify the signature, dedupe, hand off to internal processing, return `200`. Doing real work before acking means a slow database makes the sender think delivery failed, and now you get a retry *and* a half-finished first attempt.
+The receiver should do almost nothing synchronously: verify the signature, dedupe, hand off to internal processing, return `200`. Doing real work before acking means a slow database makes the sender think delivery failed, and now you get a retry *and* a half-finished first attempt. The dedupe step itself has to be an atomic claim — a `UNIQUE` constraint plus `ON CONFLICT DO NOTHING`, checked by `rowcount`, not a `check-then-add` against an in-memory (or even a Redis) set — for the same reason Chapter 3's idempotency-key discipline can't be "store the key after doing the work": two concurrent deliveries of the same event both racing past a non-atomic check is exactly how a receiver ends up double-processing the one case this whole mechanism exists to prevent.
 
 **Versioning.** An event schema is a contract with the same evolution rules as Chapter 19: additive changes are safe, removing or retyping a field is breaking. Because you can't force webhook consumers to upgrade, pin a schema version per subscription (`?version=2024-10-01` at registration time) or include a `schema_version` in the envelope and transform old subscribers' payloads on the way out.
 
@@ -135,7 +170,7 @@ Beyond HTTP callbacks, the two broad infrastructure shapes are **point-to-point 
 
 The concepts an architect has to reason about are the same across both:
 
-- **At-least-once is the default and the ceiling.** "Exactly-once" as marketed is at-least-once delivery plus idempotent processing plus transactional offset commits — it is a property of *your consumer*, not a checkbox on the broker. Design every consumer to tolerate reprocessing the same message.
+- **At-least-once delivery is the common default.** Some platforms and processing frameworks provide exactly-once *processing* semantics under specific, narrowly-scoped conditions (a single Kafka cluster with transactional producers and read-committed consumers, for instance) — but that guarantee covers the broker-to-consumer hop, not your end-to-end business effect. A broker delivering a message exactly once doesn't mean "charge the customer" happens exactly once if that handler also calls out to a payment API, writes to a second data store, or crashes between two side effects. Treat every consumer as needing to be idempotent unless you've specifically established, for that exact pipeline, that a stronger guarantee holds end-to-end — the safe default assumption is at-least-once, with idempotent processing and transactional offset commits doing the real work of making redelivery harmless.
 - **Ordering is partition-scoped, not global.** Kafka orders messages within a partition, keyed by (usually) an aggregate id, so all events for order `42` are ordered relative to each other but not relative to order `43`. If you need a global order you've designed the keys wrong or you need a different tool.
 - **Offsets are consumer state.** A consumer group commits its position in the log. Commit after processing, not before, or a crash loses messages; commit too coarsely and a crash reprocesses a large batch. This is the knob behind most "we lost events" and "we replayed a million events" incidents.
 - **Poison messages need a dead-letter queue.** A message that always fails to process (bad schema, references a deleted entity) will block a partition or spin a queue forever. After N failed attempts, route it to a DLQ and alert — never drop it silently, never retry it forever.
@@ -192,7 +227,7 @@ flowchart LR
 
 Once a business operation spans services connected by events, you've given up cross-service transactions. A "place order" that reserves inventory, charges payment, and books shipping is now a **saga**: a sequence of local transactions, each publishing an event that triggers the next, with **compensating actions** to undo completed steps when a later one fails (release the inventory reservation, refund the charge).
 
-Two coordination styles: **choreography**, where each service reacts to events and emits its own, with no central coordinator (simple to start, hard to see the whole flow later); and **orchestration**, where a coordinator service explicitly drives each step and handles compensation (a visible state machine, at the cost of a component that knows about every participant). For anything with more than three steps or non-trivial compensation logic, orchestration's debuggability usually wins.
+Two coordination styles: **choreography**, where each service reacts to events and emits its own, with no central coordinator (simple to start, hard to see the whole flow later); and **orchestration**, where a coordinator service explicitly drives each step and handles compensation (a visible state machine, at the cost of a component that knows about every participant). As the number of steps and compensation paths grows, orchestration often becomes easier to reason about and operate.
 
 The architectural cost to accept openly: there is a window where inventory is reserved but payment hasn't been charged, and clients (and your own UIs) must be designed for "pending" as a real, first-class state — not an error, not a loading spinner.
 
@@ -211,7 +246,7 @@ The tracing story from Chapter 17 has to survive the hop through a broker. Propa
 - **Synchronous work in a webhook receiver**: doing the real processing before returning `200`, so a slow backend triggers sender retries and duplicate processing during exactly the load spike that slowed the backend.
 - **Unbounded webhook retries**: retrying a permanently-dead consumer endpoint forever instead of dead-lettering and disabling the subscription, wasting delivery capacity and delaying healthy subscribers.
 - **No DLQ for poison messages**: one un-processable message blocking a partition or infinitely recycling through a queue, silently halting all progress for that key range.
-- **Treating `occurred_at` order as delivery order**: a consumer that applies events in the order they arrive rather than the order they happened, corrupting state whenever a retry reorders the stream.
+- **Reordering on `occurred_at` instead of a sequence number**: a consumer that applies events in delivery order, or that tries to fix that by sorting on the producer's wall-clock timestamp, corrupting state whenever a retry reorders the stream or clock skew between producers puts two `occurred_at` values out of true order — the per-aggregate sequence number above is the field actually safe to reorder on.
 - **Event schema breaking change**: removing or retyping a field in an event already persisted in a replayable topic and consumed by teams you can't coordinate a synchronized deploy with.
 
 ## What's next

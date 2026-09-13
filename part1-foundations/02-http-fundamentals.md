@@ -88,7 +88,7 @@ sequenceDiagram
 | `Cache-Control: private` / `public` | Only the client may cache / any shared cache (CDN) may cache |
 | `ETag` + `If-None-Match` | Content-fingerprint validation — `304` skips resending an unchanged body |
 
-None of this is protocol-specific machinery — it's why a REST API gets CDN and browser caching "for free" the moment it sets these headers correctly, and why GraphQL and gRPC don't: a GraphQL endpoint is a single URL (`POST /graphql`) that returns a different shape per query body, and gRPC doesn't ride on cacheable HTTP semantics at all, so neither has a URL-keyed cache entry for any of this machinery to attach to (Chapter 9 covers GraphQL's alternative, query-hash-keyed caching).
+None of this is protocol-specific machinery — it's why a REST API can take advantage of CDN and browser caching the moment it sets these headers correctly, and why GraphQL and gRPC can't in the same way: a GraphQL endpoint is a single URL (`POST /graphql`) that returns a different shape per query body, and gRPC doesn't ride on cacheable HTTP semantics at all, so neither has a URL-keyed cache entry for any of this machinery to attach to (Chapter 9 covers GraphQL's alternative, query-hash-keyed caching).
 
 ### Beyond HTTP: application and distributed caching
 
@@ -99,7 +99,7 @@ Two hard problems come with it, and they're the same regardless of API style:
 - **Invalidation.** A cached value that outlives a change to its source serves stale data. TTLs bound the staleness; explicit invalidation on write removes it but adds a consistency burden and its own race conditions.
 - **The stampede.** When a popular key expires, every concurrent request misses at once and all of them hit the database together — a self-inflicted load spike precisely on your hottest data. Mitigations: a short lock so one request recomputes while others serve the stale value, early/probabilistic recomputation before expiry, or serving stale-while-revalidate. The related failures are cache *penetration* (many requests for a key that doesn't exist, so nothing is ever cached — cache the negative result) and cache *avalanche* (many keys expiring at the same instant — jitter the TTLs).
 
-These are out of scope for the rest of this book, which stays focused on the API surface, but an architect choosing a protocol should know that "REST caches for free" refers only to the HTTP layer — the application-cache work is the same whether the endpoint is REST, GraphQL, or gRPC.
+These are out of scope for the rest of this book, which stays focused on the API surface, but an architect choosing a protocol should know that REST's ability to take advantage of standardized HTTP caching applies only to that HTTP layer — the application-cache work above is the same whether the endpoint is REST, GraphQL, or gRPC.
 
 ## HTTP/1.1: the baseline
 

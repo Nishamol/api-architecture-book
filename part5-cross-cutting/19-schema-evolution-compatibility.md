@@ -139,11 +139,56 @@ A compatibility check passing in CI answers "is this technically safe" — it do
 
 For organizations with many services and many consuming teams, a schema registry (Buf Schema Registry for Protobuf, Apollo GraphOS's schema registry for GraphQL/federation, or an OpenAPI registry for REST) becomes the source of truth that CI checks against, rather than relying on each team manually tracking what's safe. This is worth introducing once the number of schema producers and consumers exceeds what a single team can track by convention alone — usually well before it feels urgent, since the cost of a breaking change scales with how many consumers have already integrated by the time it's caught.
 
+## From schema evolution to API lifecycle
+
+Everything above answers "is this specific change safe." That's necessary but not sufficient — schema compatibility is one stage of a longer lifecycle every API actually goes through, and "additive change, CI passed" says nothing about whether anyone owns the API, whether its consumers are known, or what happens when a change genuinely can't be additive:
+
+```
+Design → Review → Publish → Adopt → Observe → Deprecate → Migrate → Sunset
+```
+
+A few of these stages need more than the compatibility tooling this chapter covers:
+
+- **API ownership.** Every published API — REST, GraphQL, or gRPC — needs a team of record who approves changes and answers "can we break this." A schema with no clear owner is how a breaking change ships because three teams each assumed someone else would object.
+- **Consumer inventory.** The same discipline Chapter 6 introduces for REST versioning applies to every protocol: know who's actually calling a given endpoint, field, or RPC method (by API key, service identity, or client ID) before deciding a change is safe to make, because "the schema diff is clean" and "no consumer will notice" are different claims.
+- **Deprecation and sunset policy.** A standing, written policy — how long a deprecated field or endpoint stays functional, what "well in advance" means in days, who gets notified — turns deprecation into something predictable consumers can plan around, instead of a case-by-case negotiation every time.
+- **Breaking-change review.** A genuinely breaking change (Chapter 6's version-bump categories, generalized across protocols) should require sign-off from someone other than the author, precisely because the author is the person least likely to know about a consumer they forgot exists.
+- **An API catalog.** Once an organization has more than a handful of APIs, "which team owns `orders.v1`, and who's consuming it" needs to be answerable by looking something up, not by asking around — the catalog is what makes ownership and consumer inventory actually operable rather than aspirational.
+
+## API governance: how an organization keeps 200 teams from designing 200 incompatible APIs
+
+Lifecycle discipline assumes each individual API is already well-designed. Governance is the layer above that, and it exists to answer a different question: with many teams each building APIs independently, what keeps them consistent enough that a consumer moving between them isn't relearning conventions every time, and what catches a problem before it ships rather than after? A lightweight governance pipeline applies the same checks — consistently, automatically — to every new or changed API before it reaches consumers:
+
+```mermaid
+flowchart LR
+    Style["API style guide<br/>(naming, error shapes,<br/>pagination conventions)"]
+    Review["Design review<br/>(human sign-off before<br/>a contract is built)"]
+    Lint["Linting<br/>(Spectral for OpenAPI,<br/>GraphQL/Protobuf schema linters)"]
+    Sec["Security review<br/>(Chapter 13's threat model,<br/>applied pre-launch)"]
+    Compat["Compatibility check<br/>(this chapter's CI tooling)"]
+    Pub["Publish<br/>(to the API catalog)"]
+    Obs["Observe<br/>(usage telemetry,<br/>Chapter 17)"]
+
+    Style --> Review --> Lint --> Sec --> Compat --> Pub --> Obs
+
+    classDef neutral fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    classDef security fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+
+    class Style,Review neutral
+    class Lint,Sec,Compat security
+    class Pub,Obs success
+```
+
+The **style guide** exists so a consumer working across five internal APIs finds the same pagination convention, the same error envelope shape (Chapter 16), and the same naming pattern in all five, rather than five different conventions each internally consistent but mutually surprising. **Design review** catches modeling problems (Chapter 3's resource-vs-action distinction, a GraphQL schema shaped like a database dump — Chapter 8) while the contract is still cheap to change, before code and consumers exist. **Linting** (Spectral for OpenAPI, equivalent tools for GraphQL SDL and Protobuf) makes the style guide mechanically enforceable instead of a document people mean to follow. **Security review** applies Chapter 13's threat model checklist before launch rather than after an incident. **Compatibility checking** is everything this chapter already covers. The pipeline's point isn't to add ceremony — a small team can run all six steps as a single PR template and a couple of CI jobs — it's that the same checks apply uniformly whether team 4 or team 150 is publishing, which is what actually keeps a large organization's APIs from drifting into 200 mutually incompatible dialects of "REST" or "GraphQL."
+
 ## Failure modes
 
 - **Protobuf tag reuse after field removal**: a tag number reused for a new field without marking the old one `reserved`, causing old clients to misinterpret the new field's data as the old field's type.
 - **GraphQL nullable-to-non-nullable tightening**: a field made non-nullable because "it's always populated now," breaking any client whose generated types or runtime checks assumed it could be null.
 - **No CI-enforced compatibility checking**: relying on code review alone to catch breaking schema changes, which reliably misses them once the schema is large enough that no single reviewer holds the whole consumer landscape in their head.
+- **An API with no owner**: a schema everyone treats as safe to change because no team is clearly accountable for approving what happens to it, discovered only when a breaking change ships and three different teams each assumed someone else would object.
+- **Governance applied inconsistently across teams**: a style guide and review process that exists but is only actually followed by the teams who happen to remember it, producing exactly the drift — inconsistent pagination, error shapes, naming — governance was meant to prevent.
 
 ## What's next
 

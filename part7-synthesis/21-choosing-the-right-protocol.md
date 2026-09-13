@@ -18,7 +18,7 @@ Once the interaction is genuinely synchronous request/response, these are the ax
 
 **What's your team's tolerance for operational complexity?** REST is the lowest common denominator — every engineer, every tool, every debugging technique from the last 25 years works against it with no translation layer. GraphQL requires N+1 discipline, query cost analysis, and often a federation strategy once you scale past one team. gRPC requires comfort with Protocol Buffers, code generation pipelines, and (per Chapter 12) careful load-balancer configuration that plain REST doesn't demand.
 
-**What's your caching story?** REST's URL-keyed caching is close to free at every layer (browser, CDN, reverse proxy). GraphQL needs deliberate normalized client-side caching or persisted-query-keyed server caching (Chapter 9) — nothing comes for free. gRPC is rarely cached in the HTTP sense at all; its performance model comes from avoiding round trips and payload size, not from caching responses.
+**What's your caching story?** HTTP caching can be leveraged at multiple layers — browser, CDN, reverse proxy — when cache semantics and freshness requirements permit, and REST's URL-keyed model is what makes that leverage reachable: a stable URL gives every layer in the stack something to key a cache entry on, provided the response's `Cache-Control`, `Vary`, and authentication characteristics (Chapter 3) actually make it cacheable. GraphQL forfeits that URL-keying by design — a single endpoint returning a different shape per query body has no URL-level cache key at all — so it needs deliberate normalized client-side caching or persisted-query-keyed server caching (Chapter 9) to get any caching benefit back. gRPC is rarely cached in the HTTP sense at all; its performance model comes from avoiding round trips and payload size, not from caching responses.
 
 ## The full axis set, organized
 
@@ -41,18 +41,45 @@ The four questions above are really instances of five broader categories worth n
 
 None of these five replace the other; they compose. An internal service-to-service call is synchronous + command/RPC + Protobuf + low-latency/ordered-per-key + both-ends-owned-by-you — which is exactly why it lands on gRPC. A public integration notifying sellers of a shipment is asynchronous + event + AsyncAPI-described + at-least-once/unordered + unknown-consumer-count — which is why it's a webhook, not a REST response field. Running the five-axis analysis explicitly is what turns "gut feel says gRPC" into a decision you can defend and revisit later.
 
+```mermaid
+flowchart TB
+    Center(("How should these<br/>two systems talk?"))
+
+    Center --> CM["Communication model<br/>sync · async · streaming"]
+    Center --> IM["Interaction model<br/>resource · query · command/RPC ·<br/>event · notification"]
+    Center --> CT["Contract model<br/>OpenAPI · GraphQL SDL ·<br/>Protobuf · AsyncAPI"]
+    Center --> OC["Operational characteristics<br/>latency · throughput · caching ·<br/>ordering · retries · delivery · backpressure"]
+    Center --> OF["Organizational factors<br/>producer/consumer ownership ·<br/>independent deploys · unknown consumers"]
+
+    CM & IM & CT & OC & OF --> Out(("REST · GraphQL · gRPC ·<br/>webhook · event ·<br/>or a hybrid of these"))
+
+    classDef center fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
+    classDef axis fill:#f3f4f6,stroke:#9ca3af,color:#374151
+    classDef out fill:#dcfce7,stroke:#16a34a,color:#14532d
+
+    class Center center
+    class CM,IM,CT,OC,OF axis
+    class Out out
+```
+
+This diagram, more than the REST-vs-GraphQL-vs-gRPC framing that opens the book, is the shape of the actual decision every chapter has been building toward — the protocol is what falls out the bottom once the five axes are answered, not the question you start with.
+
 ## A quick-reference table
 
 | Concern | REST | GraphQL | gRPC |
 |---|---|---|---|
-| Best client fit | Unknown/diverse, third-party | Known first-party client teams | Internal services you control |
+| Typical fit | Broad or heterogeneous consumers — unknown/diverse and third-party integrators | Clients needing flexible, per-request data selection — usually a small set of coordinated teams, but not inherently private | Controlled service-to-service communication — usually internal, but can be exposed externally via a gateway or transcoding (Chapter 14) |
 | Over/under-fetching | Common problem | Solved by design | N/A (defined by proto contract) |
-| Caching | Free at every layer | Requires deliberate design | Rarely applicable |
+| Caching | Standardized HTTP caching semantics apply at every layer, when the response is actually cacheable | Requires deliberate design | Rarely applicable |
 | Type safety | Weak (OpenAPI is a convention) | Strong (schema-enforced) | Strongest (compile-time) |
-| Streaming | Workarounds only (SSE, chunked) | Subscriptions (heavier-weight) | Native, all four RPC shapes |
+| Streaming | Workarounds only (SSE, chunked) | Subscriptions (heavier-weight) | Native, all four RPC shapes\* |
 | Browser-native | Yes | Yes | No (needs grpc-web or a gateway) |
 | Operational complexity | Lowest | Moderate-to-high at scale | Moderate (mesh/LB awareness needed) |
 | Long-running / fire-and-forget work | `202` + job resource, or publish an event (Chapter 20) — not a blocking call | Same — subscriptions notify, they don't do the work | Same — plus a job/status RPC; streaming is not a substitute for async |
+
+\* All of a protocol's streaming shapes here — gRPC's four RPC types, GraphQL subscriptions, REST's SSE/chunked workarounds — are transport-level: a persistent connection carrying a sequence of messages within one client's request lifecycle. None of them are interchangeable with the event-driven, asynchronous processing model in Chapter 20 — a streaming RPC still needs a connected client on the other end and ends when that connection does, where a published event is durable, has no connected caller, and can be consumed by systems that didn't exist yet when it was published. "Streaming is not a substitute for async" (this chapter's table above) is the same distinction stated the other way around.
+
+As a classification rather than a heuristic, "typical fit" above breaks down at the edges on purpose: GraphQL can be public (many API platforms expose it directly), REST can be the right choice for an internal path valued for debuggability, and gRPC routinely reaches external clients through exactly the gateway pattern Chapter 14 covers. Treat the table as a starting point for the axes in the next section, not a lookup table.
 
 ## Hybrid architectures are the norm, not the exception
 

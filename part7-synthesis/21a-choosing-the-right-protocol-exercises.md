@@ -7,7 +7,7 @@
 1. The chapter organizes the synchronous decision into four axes. Name all four, and for the "who is the client, and how many client teams exist?" axis, explain — using the chapter's own contrast — why a public API and a small set of first-party mobile teams lead to different protocol conclusions even though both are "just clients."
 2. The quick-reference table lists gRPC's over/under-fetching row as "N/A (defined by proto contract)," distinct from REST's "Common problem" and GraphQL's "Solved by design." Explain why gRPC sidesteps this axis entirely rather than "solving" it the way GraphQL does.
 3. The chapter says the mistake to avoid "is not 'using the wrong protocol' in isolation." What more specific mistake does it identify instead, and how do the chapter's two examples (raw gRPC to third-party integrators, a public GraphQL API without cost-limiting discipline) both illustrate it?
-4. Using the chapter's caching-story axis, explain why REST's caching is described as "close to free at every layer" while GraphQL's requires "deliberate normalized client-side caching or persisted-query-keyed server caching." What structural property of each protocol's contract causes this difference?
+4. Using the chapter's caching-story axis, explain why REST can take advantage of standardized HTTP caching at multiple layers (when a response is actually cacheable) while GraphQL requires "deliberate normalized client-side caching or persisted-query-keyed server caching." What structural property of each protocol's contract causes this difference — and what has to be true of a REST response's headers for that caching potential to actually be realized?
 5. The chapter says "the first question is not 'which protocol.'" What question does it put first, what are the three answers it lists, and why does it claim "no amount of REST-vs-gRPC deliberation" fixes the case it has in mind?
 
 ## Design question (interview-style)
@@ -18,7 +18,7 @@ Using the chapter's four axes, make a specific recommendation for each of the th
 
 ## Applied exercise
 
-The chapter's quick-reference table has seven rows (Best client fit, Over/under-fetching, Caching, Type safety, Streaming, Browser-native, Operational complexity). Do two things:
+The chapter's quick-reference table has eight rows (Typical fit, Over/under-fetching, Caching, Type safety, Streaming, Browser-native, Operational complexity, Long-running/fire-and-forget work). Do two things:
 
 1. **Add a new row** to the table for a concern the chapter discusses but doesn't put in the table: **"Coordinating a breaking schema/contract change with consumers."** Fill in the REST, GraphQL, and gRPC cells, grounding each cell in language from this chapter and Chapter 19 (which axis — client count, coordination ability — determines how costly a breaking change is for each protocol).
 2. **Challenge one existing cell.** Pick the "Streaming" row's GraphQL cell ("Subscriptions (heavier-weight)") and argue the nuance that single cell hides: under what circumstances would a team reasonably choose gRPC streaming over GraphQL subscriptions even for a first-party client population that otherwise fits GraphQL well, per this chapter's own axes?

@@ -4,7 +4,7 @@
 
 ## Concept questions
 
-1. Under what circumstance does this chapter say Django REST Framework is the right choice over FastAPI, even though FastAPI is described as "the default choice for greenfield Python REST APIs since roughly 2020"? Be specific about what DRF gives you that FastAPI doesn't provide out of the box.
+1. Under what circumstance does this chapter say Django REST Framework is the right choice over FastAPI, even though FastAPI is described as "a popular choice for greenfield Python APIs, particularly where async I/O and type-driven validation matter"? Be specific about what DRF gives you that FastAPI doesn't provide out of the box.
 2. In the `create_order` example, `response_model=OrderOut` does more than shape the JSON response — the chapter calls it a security control. Explain what specific class of bug it prevents, and connect it to the "Missing `response_model`" failure mode named later in the chapter.
 3. The chapter says FastAPI's `Depends` mechanism "exists as much for testability as for convenience." Using the `get_db` / `get_test_db` example, explain concretely what breaks in a test suite built on module-level singleton database connections instead, and how `dependency_overrides` avoids that problem.
 4. Using the `get_report` example, explain why a single synchronous blocking call inside an `async def` handler can degrade latency for requests that have nothing to do with that handler. What is the underlying execution model (be specific about what "the event loop" is doing) that makes this true, and what is the one-line fix shown in the chapter?
