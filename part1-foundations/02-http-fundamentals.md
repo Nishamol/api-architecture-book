@@ -6,17 +6,17 @@ REST is defined by HTTP semantics. GraphQL usually rides on top of HTTP as a tra
 
 ## Where HTTP fits in the network stack
 
-HTTP is an application-layer protocol — Layer 7 in the OSI model. Everything below it is invisible to the code you write against `httpx` or `grpc`, but the failure modes covered later in this chapter (head-of-line blocking, TLS handshake cost, load balancer blindness) only make sense once you can place HTTP relative to what actually carries it.
+HTTP is commonly described as an application-layer protocol — Layer 7 in the OSI model. That reference is useful shorthand, but worth a caveat up front: the practical Internet protocol stack doesn't map cleanly onto OSI's seven layers, and TLS is the clearest example — it doesn't have a clean OSI layer of its own, sitting instead between the application protocol and the transport layer, wrapping HTTP without being part of either. The diagram below uses a practical stack instead of forcing everything into OSI numbering. Everything below HTTP is invisible to the code you write against `httpx` or `grpc`, but the failure modes covered later in this chapter (head-of-line blocking, TLS handshake cost, load balancer blindness) only make sense once you can place HTTP relative to what actually carries it.
 
 ```mermaid
 flowchart TB
-    L7["Layer 7 — Application<br/>HTTP/1.1 · HTTP/2 · HTTP/3<br/>methods, headers, status codes, body"]
-    L6["Layer 6 — Presentation<br/>TLS<br/>encryption, certificate verification"]
-    L4["Layer 4 — Transport<br/>TCP (HTTP/1.1, HTTP/2) or QUIC/UDP (HTTP/3)<br/>reliable delivery, ordering, congestion control"]
-    L3["Layer 3 — Network<br/>IP<br/>routing packets between hosts"]
-    L2["Layer 2/1 — Data Link / Physical<br/>Ethernet, Wi-Fi, etc.<br/>framing bits onto the wire"]
+    L7["Application<br/>HTTP/1.1 · HTTP/2 · HTTP/3<br/>methods, headers, status codes, body"]
+    SEC["Security<br/>TLS — wraps the application protocol,<br/>sits above transport<br/>encryption, certificate verification"]
+    L4["Transport<br/>TCP (HTTP/1.1, HTTP/2) or QUIC/UDP (HTTP/3)<br/>reliable delivery, ordering, congestion control"]
+    L3["Network<br/>IP<br/>routing packets between hosts"]
+    L2["Link<br/>Ethernet, Wi-Fi, etc.<br/>framing bits onto the wire"]
 
-    L7 --> L6 --> L4 --> L3 --> L2
+    L7 --> SEC --> L4 --> L3 --> L2
 
     classDef app fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:2px
     classDef sec fill:#fef3c7,stroke:#d97706,color:#78350f
@@ -24,7 +24,7 @@ flowchart TB
     classDef net fill:#f3f4f6,stroke:#9ca3af,color:#374151
 
     class L7 app
-    class L6 sec
+    class SEC sec
     class L4 transport
     class L3,L2 net
 ```
@@ -103,7 +103,7 @@ These are out of scope for the rest of this book, which stays focused on the API
 
 ## HTTP/1.1: the baseline
 
-HTTP/1.1 is request-response over a TCP connection, with keep-alive allowing connection reuse across sequential requests. Its core limitation is **head-of-line blocking**: a connection can only have one request in flight at a time (pipelining exists in the spec but is effectively unusable in practice). Browsers work around this by opening multiple parallel connections per host (historically 6), which is why REST APIs under HTTP/1.1 benefit from splitting requests across hostnames — a hack that HTTP/2 makes obsolete.
+HTTP/1.1 is request-response over a TCP connection, with keep-alive allowing connection reuse across sequential requests. Its core limitation is **head-of-line blocking**: a connection normally processes one request/response at a time. Pipelining exists in the specification and technically allows multiple requests to be sent before their responses arrive, but responses must still come back in the same order they were requested — a slow response at the front of the queue blocks every response behind it — and browser/client support for pipelining is poor enough that it's effectively unusable in modern practice. Browsers work around the underlying limitation by opening multiple parallel connections per host (historically 6), which is why REST APIs under HTTP/1.1 benefit from splitting requests across hostnames — a hack that HTTP/2 makes obsolete.
 
 ```python
 import httpx
@@ -132,7 +132,7 @@ with httpx.Client(http2=True) as client:
 
 HTTP/2's multiplexing is undone by a single dropped TCP packet: because all streams share one TCP connection, one lost packet blocks every stream until it's retransmitted. HTTP/3 replaces TCP with **QUIC**, a UDP-based transport with per-stream loss recovery, so a dropped packet only blocks the stream it belongs to. QUIC also folds the TLS handshake into the transport handshake, cutting connection setup latency — meaningful for mobile clients on lossy networks. QUIC connections are also identified by a connection ID rather than the traditional (source IP, source port) tuple, which enables **connection migration**: a client that switches networks mid-request (Wi-Fi to cellular, for instance) keeps the same QUIC connection instead of tearing down and renegotiating a new TCP+TLS session. This is where HTTP/3 matters most — mobile and edge-facing traffic on unreliable networks — rather than for stable service-to-service links inside a datacenter, where TCP's head-of-line blocking rarely bites in practice.
 
-gRPC's performance story is built specifically on HTTP/2's multiplexing and flow control, and that doesn't carry over to HTTP/3 automatically: `grpc/grpc-http3` support is still maturing across languages (Python included), and moving gRPC onto QUIC changes its congestion-control and flow-control behavior in ways that need separate validation rather than assuming an HTTP/2 deployment's tuning still applies. Support for HTTP/3 in Python server stacks (via `aioquic`-backed servers) is also still maturing relative to Go and Rust; as of this writing, most production gRPC and REST deployments in Python still run over HTTP/2, with HTTP/3 rolling out at the CDN/edge layer in front of them.
+gRPC's performance story is built specifically on HTTP/2's multiplexing and flow control, and that doesn't carry over to HTTP/3 automatically: `grpc/grpc-http3` support is still maturing across languages (Python included), and moving gRPC onto QUIC changes its congestion-control and flow-control behavior in ways that need separate validation rather than assuming an HTTP/2 deployment's tuning still applies. Support for HTTP/3 in Python server stacks (via `aioquic`-backed servers) is also still maturing relative to Go and Rust. Python production deployments commonly use HTTP/1.1 and HTTP/2 today, while HTTP/3 support across Python server and gRPC stacks remains less mature and requires stack-specific validation before depending on it directly — HTTP/3 more commonly reaches these systems by rolling out at the CDN/edge layer in front of them, terminating QUIC at the edge and speaking HTTP/2 onward to the Python backend, rather than through the Python process itself.
 
 ```mermaid
 flowchart LR
@@ -197,7 +197,7 @@ flowchart LR
     Conn --> L4{{"Layer 4<br/>load balancer"}}
     Conn --> L7{{"Layer 7<br/>load balancer"}}
 
-    L4 -->|"sees 1 connection,<br/>routes it once"| PodA1["Pod A 🔥<br/>all 4 streams"]
+    L4 -->|"routes at the connection level,<br/>blind to streams inside it<br/>(simplified — exact behavior is implementation-specific)"| PodA1["Pod A 🔥<br/>all 4 streams"]
     L4 -.->|idle| PodB1["Pod B"]
     L4 -.->|idle| PodC1["Pod C"]
 
@@ -217,9 +217,9 @@ flowchart LR
     class L4,L7 lb
 ```
 
-A Layer 4 load balancer picks a backend once, when the TCP connection opens — it has no visibility into the HTTP/2 frames flowing through it, so all four multiplexed streams ride to the same pod. A Layer 7 load balancer parses up into the HTTP layer and can route each stream independently, spreading the same four calls across the fleet. This gap is exactly why HTTP/2's multiplexing, which is a win for REST and GraphQL clients, becomes a load-balancing liability for gRPC unless the balancer is L7-aware.
+A Layer 4 load balancer routes at the connection/flow level and cannot distinguish the individual HTTP/2 streams multiplexed inside a single connection — it has no visibility into the HTTP/2 frames flowing through it at all. The specific behavior varies by implementation (connection hashing, reuse policy, and so on), but the architectural consequence is the same regardless: a typical L4 balancer's routing decision is tied to the connection, so once one is established, every stream multiplexed inside it tends to ride along to whatever backend that connection landed on — in the common case, all four multiplexed streams end up on the same pod. A Layer 7 load balancer parses up into the HTTP layer and can route each stream independently, spreading the same four calls across the fleet. This gap is exactly why HTTP/2's multiplexing, which is a win for REST and GraphQL clients, becomes a load-balancing liability for gRPC unless the balancer is L7-aware.
 
-A Layer 4 (TCP) load balancer distributes connections without understanding HTTP semantics — it's fast, but with HTTP/2's multiplexing, a single connection carrying many requests all lands on one backend, which can badly skew load distribution for gRPC traffic in particular. This is why gRPC deployments typically require Layer 7 (HTTP/2-aware) load balancing or client-side load balancing to distribute individual RPCs across backends rather than distributing connections. This distinction is one of the most common production surprises for teams migrating from REST-over-HTTP/1.1 to gRPC — the load balancer that worked fine for years suddenly concentrates all traffic on one pod.
+A Layer 4 (TCP) load balancer distributes connections without understanding HTTP semantics — it's fast, but with HTTP/2's multiplexing, everything riding inside a single connection is invisible to it as separate requests, which can badly skew load distribution for gRPC traffic in particular once a connection's worth of multiplexed streams lands on one backend for that connection's lifetime. This is why gRPC deployments typically require Layer 7 (HTTP/2-aware) load balancing or client-side load balancing to distribute individual RPCs across backends rather than distributing connections. This distinction is one of the most common production surprises for teams migrating from REST-over-HTTP/1.1 to gRPC — the load balancer that worked fine for years suddenly concentrates all traffic on one pod.
 
 ## Failure modes
 
