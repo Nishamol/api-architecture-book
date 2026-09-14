@@ -67,6 +67,29 @@ async def create_order(order: OrderIn, db=Depends(get_db)):
 
 Under the hood: Starlette's ASGI server (typically Uvicorn) receives the connection, routes to the handler, FastAPI validates the request body against `OrderIn` (raising `422` automatically on failure — this is why hand-rolled validation is rarely needed), runs the dependency graph (`Depends(get_db)`), executes the handler, and serializes the return value against `response_model`, stripping any fields not declared on `OrderOut`. That last part matters for security: `response_model` acts as an allowlist, preventing accidental leakage of internal fields even if the ORM object carries them.
 
+The stripping is easy to miss until you see it happen. Suppose `db.insert_order` returns a row carrying two fields nobody declared on `OrderOut`:
+
+```python
+record = {
+    "id": "ord_1",
+    "customer_id": "cus_1",
+    "status": "PENDING",
+    "internal_cost_basis": 41.20,       # not on OrderOut
+    "fraud_score": 0.02,                # not on OrderOut
+}
+return record
+```
+
+The HTTP response body is exactly the three fields declared on `OrderOut` — the other two never leave the process, with no code in the handler doing the filtering:
+
+```json
+{
+  "id": "ord_1",
+  "customer_id": "cus_1",
+  "status": "PENDING"
+}
+```
+
 ```mermaid
 sequenceDiagram
     participant U as Uvicorn (ASGI server)

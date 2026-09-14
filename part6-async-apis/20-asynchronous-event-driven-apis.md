@@ -107,6 +107,13 @@ def sign_payload(body: bytes, secret: str) -> dict[str, str]:
 
 The receiver recomputes the HMAC and rejects the request if it doesn't match, or if the timestamp is old enough to be a replay (typically > 5 minutes). Signing the timestamp *inside* the MAC is what stops an attacker from replaying a captured-but-valid delivery.
 
+```python
+>>> sign_payload(b'{"event_id": "evt_1", "order_id": "42"}', secret="whsec_...")
+{'Webhook-Timestamp': '1749996400', 'Webhook-Signature': 'a94a8fe5ccb19ba61c4c0873d391e987982fbbd3'}
+```
+
+Both headers travel with the delivery; the receiver reconstructs the same `f"{ts}."encode() + body` input using the timestamp it received and its own copy of the secret, and rejects the request if its own computed digest doesn't match `Webhook-Signature` exactly — the body was tampered with, or the sender doesn't actually hold the shared secret.
+
 **Retries and delivery state.** The receiver's endpoint will be down sometimes. Retry on any non-2xx (or timeout) with exponential backoff and jitter (Chapter 16), for a bounded window — commonly something like 6–12 attempts over 24 hours. Track per-delivery state (`pending` / `succeeded` / `failed`) and expose it: a `GET /webhook-deliveries` endpoint and a manual "resend" control save an enormous amount of support load. After the retry budget is exhausted, move the delivery to a dead-letter store and — if an endpoint fails every delivery for long enough — disable the subscription and alert its owner rather than retrying forever.
 
 **Ordering and duplicates are the consumer's problem, and you must say so.** At-least-once delivery means the consumer *will* occasionally get the same event twice (a retry raced a slow-but-successful first attempt), and events can arrive out of order (delivery N+1 succeeds on the first try while N is still being retried). Three fields do three different jobs here, and it's worth not collapsing them into one another: a unique **`event_id`** is what a consumer dedupes on; a per-aggregate **sequence number** (monotonically increasing per order, per user, whatever the aggregate is) is what a consumer reorders on; and **`occurred_at`** is a timestamp for observability and approximate temporal context, not a safe ordering key — clock skew between producer nodes, clock resolution, and genuinely concurrent events all mean two events can carry `occurred_at` values that don't reflect the order they need to be applied in. Put all three in every event, but only trust the sequence number for ordering decisions. Document this explicitly — a consumer who assumes exactly-once, in-order delivery, or who reorders on a wall-clock timestamp, has built a bug.

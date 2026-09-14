@@ -67,6 +67,23 @@ def verify_token(token: str) -> dict:
 
 Fetch and cache the JWKS (JSON Web Key Set) rather than hardcoding public keys — identity providers rotate signing keys periodically, and a hardcoded key becomes an outage the moment rotation happens.
 
+A valid call to `verify_token` returns the decoded claims as a plain dict — this is what the rest of the request-handling code actually gets to work with:
+
+```python
+>>> verify_token(token)
+{'sub': 'user_492', 'aud': 'orders-api', 'iss': 'https://auth.example.com/', 'exp': 1750000000, 'iat': 1749996400, 'scope': 'orders:read orders:write'}
+```
+
+The two checks this section calls out as commonly skipped fail loudly and specifically when the token doesn't pass them — this is what makes them worth checking explicitly instead of trusting a library's default `decode()` behavior:
+
+```python
+>>> verify_token(expired_token)
+jwt.exceptions.ExpiredSignatureError: Signature has expired
+
+>>> verify_token(token_issued_for_a_different_service)
+jwt.exceptions.InvalidAudienceError: Invalid audience
+```
+
 ```mermaid
 sequenceDiagram
     participant C as Client

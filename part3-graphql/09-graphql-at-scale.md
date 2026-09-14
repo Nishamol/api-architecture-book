@@ -63,6 +63,17 @@ schema = strawberry.Schema(
 
 **Query complexity/cost analysis** assigns a numeric cost to each field (list fields typically cost more than scalar fields, often multiplied by an estimated result size) and rejects queries whose total exceeds a budget. This is more precise than depth limiting but requires maintaining per-field cost annotations as the schema grows — a real ongoing maintenance cost, not a set-and-forget defense.
 
+Either defense rejects the query before a single resolver runs, and the client sees that rejection in GraphQL's standard error shape — no partial `data`, because nothing was ever executed:
+
+```json
+{
+  "data": null,
+  "errors": [
+    { "message": "Query exceeds maximum depth of 8", "extensions": { "code": "QUERY_TOO_DEEP" } }
+  ]
+}
+```
+
 Both should be treated as production requirements for any GraphQL API accepting client-authored queries (i.e., anything beyond a fully trusted internal BFF), not optional hardening.
 
 ```mermaid

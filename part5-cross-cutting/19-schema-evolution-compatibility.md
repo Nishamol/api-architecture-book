@@ -46,7 +46,15 @@ flowchart TB
     class A1,A2,A3,A4 success
 ```
 
-Tools like `buf breaking` should run in CI against every `.proto` change, checking the new schema against the previous committed version — this is the kind of check that's cheap to automate and expensive to skip, since a breaking wire-format change caught in code review by a human reading a diff is much less reliable than a tool that mechanically checks every field tag.
+Tools like `buf breaking` should run in CI against every `.proto` change, checking the new schema against the previous committed version — this is the kind of check that's cheap to automate and expensive to skip, since a breaking wire-format change caught in code review by a human reading a diff is much less reliable than a tool that mechanically checks every field tag. If a PR reused tag `3` for a new field instead of marking it `reserved`, this is what stops it before merge:
+
+```
+$ buf breaking --against '.git#branch=main'
+orders.proto:21:3: Field "3" on message "Order" changed type from "string" to "int32".
+Failure: 1 breaking change(s) detected
+```
+
+The check fails the build on that one line — no human has to notice the tag number matches a field that used to mean something else.
 
 ## GraphQL schema evolution rules
 

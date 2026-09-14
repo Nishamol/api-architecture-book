@@ -23,7 +23,23 @@ class OrderService(orders_pb2_grpc.OrderServiceServicer):
         )
 ```
 
-Note `context.abort` rather than raising a Python exception directly — this is how you set a gRPC status code and detail message on the response. An unhandled Python exception propagating out of a servicer method gets caught by the gRPC runtime and surfaced to the client as an opaque `UNKNOWN` status, which is exactly the kind of debugging dead-end you want to avoid by being deliberate about error mapping.
+Note `context.abort` rather than raising a Python exception directly — this is how you set a gRPC status code and detail message on the response. An unhandled Python exception propagating out of a servicer method gets caught by the gRPC runtime and surfaced to the client as an opaque `UNKNOWN` status, which is exactly the kind of debugging dead-end you want to avoid by being deliberate about error mapping. The difference is visible directly in what the client catches:
+
+```python
+# Deliberate: context.abort(grpc.StatusCode.NOT_FOUND, "order not found")
+try:
+    await stub.GetOrder(GetOrderRequest(order_id="nonexistent"))
+except grpc.RpcError as e:
+    print(e.code(), e.details())
+# StatusCode.NOT_FOUND order not found          ← actionable: client can branch on NOT_FOUND
+
+# Undeliberate: a KeyError or similar raised inside the servicer and never caught
+try:
+    await stub.GetOrder(GetOrderRequest(order_id="42"))
+except grpc.RpcError as e:
+    print(e.code(), e.details())
+# StatusCode.UNKNOWN Exception calling application: 'line_items'   ← nothing to branch on but "something broke"
+```
 
 ## Implementing client-streaming and bidirectional servicers
 

@@ -29,6 +29,18 @@ class TokenBucket:
         return False
 ```
 
+The burst-then-steady-state behavior is easiest to see as a trace: a bucket with capacity 3 and a refill rate of 1 token/sec lets a burst of 3 requests straight through, rejects the 4th immediately, and only starts admitting again once the refill catches up:
+
+```python
+>>> bucket = TokenBucket(capacity=3, refill_rate=1.0)
+>>> [bucket.allow() for _ in range(4)]
+[True, True, True, False]     # first 3 spend the full bucket, the 4th has nothing left to spend
+
+>>> time.sleep(1)
+>>> bucket.allow()
+True                           # ~1 second elapsed → ~1 token refilled
+```
+
 In production, this state lives in Redis (via `INCR` + `EXPIRE`, or a Lua script for atomicity) rather than in-process, since a service running multiple replicas needs a shared view of each client's consumption — an in-process limiter per pod effectively multiplies the real limit by the pod count.
 
 ```mermaid

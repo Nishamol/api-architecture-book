@@ -35,6 +35,18 @@ message LineItem {
 
 The numbers (`= 1`, `= 2`) are **field tags**, not default values — they're what actually gets encoded on the wire instead of field names, which is the core reason Protobuf messages are so much smaller than the equivalent JSON. This also means field tags are permanent once shipped: reusing a tag number for a different field in a later version is a wire-format-breaking change, covered in Chapter 19.
 
+The size difference is concrete, not just directional. Encode the same order from Chapter 1 (`id="42"`, `status="SHIPPED"`, two line items) both ways:
+
+```
+JSON:     {"id":"42","status":"SHIPPED","line_items":[{"sku":"WIDGET-1","quantity":2},{"sku":"GADGET-7","quantity":1}]}
+          → 109 bytes
+
+Protobuf: 0a02 3432 1207 5348 4950 5045 44 1a0c 0a08 5749 4447 4554 2d31 1002 1a0c 0a08 4741 4447 4554 2d37 1001
+          → 41 bytes
+```
+
+Field names (`"status"`, `"line_items"`, `"quantity"`) never appear on the wire at all — only the tag byte for each field number, a length prefix for variable-length fields, and the raw values. That's where most of the difference comes from, and it's why the savings grow with how many fields a message has and how often it's sent, not just with payload size.
+
 ## Beyond flat fields: enums, nested messages, `oneof`, and well-known types
 
 Real schemas need more than strings and integers:

@@ -69,6 +69,25 @@ service OrderService {
 
 This lets a team build internal services gRPC-first (getting the type safety and performance benefits) while still serving REST-consuming external clients, without maintaining two separate implementations of the same business logic.
 
+The one detail worth seeing concretely: the transcoder converts Protobuf's `snake_case` field names to `camelCase` JSON keys by default (the standard Protobuf JSON mapping), so the external REST consumer sees idiomatic JSON even though the `.proto` file was written `snake_case` throughout:
+
+```protobuf
+message Order {
+  string id = 1;
+  string customer_id = 2;
+  repeated LineItem line_items = 3;
+}
+```
+
+```json
+GET /v1/orders/42
+{
+  "id": "42",
+  "customerId": "cus_9",
+  "lineItems": [{"sku": "WIDGET-1", "quantity": 2}]
+}
+```
+
 ```mermaid
 sequenceDiagram
     participant Ext as External client

@@ -25,6 +25,26 @@ async def check_email_not_taken(email: str, db) -> bool:
     return existing is None
 ```
 
+A request that fails `age_must_be_reasonable` doesn't just get rejected — FastAPI turns the raised `ValueError` into a structured `422` body identifying exactly which field and which check failed, with no extra code in the handler:
+
+```json
+POST /signup   {"email": "a@example.com", "age": 200}
+
+422 Unprocessable Entity
+{
+  "detail": [
+    {
+      "type": "value_error",
+      "loc": ["body", "age"],
+      "msg": "Value error, age out of plausible range",
+      "input": 200
+    }
+  ]
+}
+```
+
+That `loc` array is what makes this machine-actionable for a client — a form UI can highlight the exact field the error is about (`age`) instead of showing a generic "request failed" message.
+
 | | Schema validation | Business-rule validation |
 |---|---|---|
 | Answers | Is this data structurally well-formed? | Is this data valid given the current state of the system? |
@@ -106,6 +126,16 @@ async def get_order(order_id: str, fields: str | None = None):
         requested = set(fields.split(","))
         return full.model_dump(include=requested)
     return full
+```
+
+`?fields=id,status` and no `fields` param produce visibly different bodies from the same underlying `order`, with everything else on `OrderOut` (customer address, full line-item detail, timestamps) present in the default response and gone the moment a client asks for a subset:
+
+```
+GET /orders/42
+→ {"id": "42", "status": "SHIPPED", "customer_id": "cus_9", "line_items": [...], "shipping_address": {...}}
+
+GET /orders/42?fields=id,status
+→ {"id": "42", "status": "SHIPPED"}
 ```
 
 ## Failure modes

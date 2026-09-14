@@ -81,6 +81,21 @@ async def create_order(payload: dict, idempotency_key: str = Header(...)):
     return order
 ```
 
+The point to notice is that the retry doesn't just avoid an error — it returns *the exact same body* as the original call, byte for byte, because it's the stored response being replayed, not a fresh computation:
+
+```
+First call:
+POST /orders (Idempotency-Key: abc123)
+Body: {"customer_id": "cus_1", "line_items": [...]}
+→ 200 OK
+  {"id": "ord_123", "customer_id": "cus_1", "line_items": [...]}
+
+Retry after a timeout, same key:
+POST /orders (Idempotency-Key: abc123)
+→ 200 OK
+  {"id": "ord_123", "customer_id": "cus_1", "line_items": [...]}   ← identical response, no new order created
+```
+
 ```mermaid
 sequenceDiagram
     participant C as Client

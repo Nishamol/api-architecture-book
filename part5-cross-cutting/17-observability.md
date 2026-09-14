@@ -29,6 +29,15 @@ async def get_order(order_id: str, trace_id: str):
     return order
 ```
 
+What actually lands in the log aggregator is one JSON object per call, every keyword argument as its own independently queryable field — this is the concrete difference from `f"Order {order_id} failed"`, which produces a string a log aggregator can only full-text search, not filter or aggregate on:
+
+```json
+{"event": "order_lookup_started", "order_id": "42", "trace_id": "a1b2c3", "timestamp": "2026-01-15T10:22:01Z", "level": "info"}
+{"event": "order_not_found", "order_id": "42", "trace_id": "a1b2c3", "timestamp": "2026-01-15T10:22:01Z", "level": "warning"}
+```
+
+A query like "every `order_not_found` in the last hour, grouped by `order_id`" is a direct field filter against this shape; against an unstructured `f"Order {order_id} failed"` string, the same question requires parsing the message text back apart first.
+
 ## Distributed tracing with OpenTelemetry
 
 OpenTelemetry has become the standard instrumentation layer across REST, GraphQL, and gRPC — a single SDK emits spans regardless of which protocol a given call uses, and trace context propagates automatically across HTTP headers (`traceparent`) or gRPC metadata via auto-instrumentation.
