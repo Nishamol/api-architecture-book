@@ -46,6 +46,22 @@ flowchart TB
     class DB2 success
 ```
 
+## Catching N+1 before it reaches production
+
+DataLoader fixes N+1 once you know a resolver needs it — the harder problem is that an unbatched resolver looks identical to a batched one in development, where a test fixture has 3 customers instead of 200,000. Three techniques catch the regression before a user does:
+
+**Assert query counts in tests, not just correctness.** Wrap the DB session or ORM engine with a counter and assert on it directly, so a resolver that quietly loses its DataLoader wiring fails CI instead of showing up as a production latency cliff:
+
+```python
+async def test_customer_orders_are_batched(query_counter):
+    await schema.execute(CUSTOMERS_WITH_ORDERS_QUERY)
+    assert query_counter.count <= 2  # 1 for customers, 1 batched load for orders
+```
+
+**Trace at the resolver level.** An OpenTelemetry span (or the tracing extension most GraphQL frameworks ship) per resolver invocation turns N+1 into something visible in a trace waterfall: twenty near-identical child spans for `Customer.orders` under one request is the same fan-out signature you'd recognize in any other service, and it shows up without anyone having to notice a slow page first.
+
+**Track resolver call counts per operation in APM.** Because every GraphQL request hits the same HTTP endpoint, generic route-level APM is blind to this — the metric that matters is per-*operation-name* resolver call count and latency (what Apollo Studio's trace view, or an equivalent field-level extension, surfaces), so a specific query's fan-out width is visible as a trend over time, not just as a single trace.
+
 ## Query complexity and depth limiting
 
 Because GraphQL exposes a graph, nothing stops a client (malicious or just poorly written) from writing a query that traverses `customer → orders → customer → orders` many levels deep, or requesting every scalar field on every type in a single query. Two standard defenses:
@@ -130,6 +146,24 @@ extend type Order @key(fields: "id") {
 ```
 
 Federation trades resolver simplicity for genuine distributed-systems complexity: a single client query can now fan out across multiple services, and the gateway needs its own query planning, error aggregation, and — critically — its own N+1 awareness at the cross-service level, since a naive federated resolver can turn one client query into a request storm across your entire service mesh.
+
+Cross-service N+1 needs a fix at two independent layers, and fixing only one leaves the problem half-solved:
+
+**Gateway-level:** federation resolves fields owned by another subgraph through a built-in batch mechanism — the `_entities` query. When the gateway needs `Order.customer` for 20 orders, correctly implemented entity resolution sends `customer-service` one `_entities` call carrying all 20 keys, not 20 separate round-trips. This is federation's own analog to DataLoader, operating at the gateway rather than the resolver.
+
+**Subgraph-level:** that batched `_entities` call still has to be resolved by the owning subgraph, and if its reference resolver fetches one entity at a time inside the batch, the N+1 has simply moved down a level rather than disappeared:
+
+```python
+@strawberry.federation.type(keys=["id"])
+class Customer:
+    id: strawberry.ID
+
+    @classmethod
+    async def resolve_reference(cls, id: strawberry.ID) -> "Customer":
+        return await customer_loader.load(id)  # batches within the _entities call
+```
+
+Batching at the gateway without batching inside the subgraph turns N network round-trips into one, but that one call still triggers N database queries once it lands. Batching inside the subgraph without gateway-level entity batching fixes the database load but still pays N times the network and serialization overhead federation added in the first place. Both layers need their own DataLoader-equivalent for cross-service N+1 to actually go away.
 
 ```mermaid
 flowchart TB
